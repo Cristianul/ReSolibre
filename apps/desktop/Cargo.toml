@@ -1,0 +1,24 @@
+[package]
+name = "resolibre-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+resolibre-core = { path = "../../crates/resolibre-core" }
+resolibre-audio = { path = "../../crates/resolibre-audio" }
+slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "unstable-winit-030", "renderer-femtovg", "accessibility", "compat-1-18"] }
+rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal", "wayland"] }
+
+raw-window-handle = "=0.6.2"
+x11rb = { version = "=0.13.2", default-features = false }
+
+[build-dependencies]
+slint-build = { version = "=1.18.1", default-features = false, features = ["compat-1-18"] }
+
+[dev-dependencies]
+i-slint-backend-testing = { version = "=1.18.1", features = ["renderer-software"] }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+
+[lints]
+workspace = true

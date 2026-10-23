@@ -1,0 +1,30 @@
+import { ActionButton } from "controls.slint";
+import { Theme } from "theme.slint";
+
+// One contextual decision surface for both drop targets; outside click and Escape cancel.
+export component ImportMenu inherits Rectangle {
+    in property <float> anchor-x: 24;
+    in property <float> anchor-y: 48;
+    callback choose(int);
+    changed visible => { if root.visible { add.focus(); } }
+    TouchArea { width: root.width; height: root.height; clicked => { root.choose(-1); } }
+    FocusScope {
+        x: clamp(root.anchor-x * 1px, 8px, max(8px, root.width - self.width - 8px));
+        y: clamp(root.anchor-y * 1px, 8px, max(8px, root.height - self.height - 8px));
+        width: 180px; height: 112px;
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.choose(-1); return accept; }
+            return reject;
+        }
+        Rectangle {
+            border-radius: 6px; border-width: 1px; border-color: Theme.edge;
+            background: Theme.inset;
+            VerticalLayout {
+                padding: 8px; spacing: 4px;
+                Text { text: @tr("Dropped music"); color: Theme.muted; font-size: 11px; height: 18px; }
+                add := ActionButton { compact: true; quiet: true; show-icon: false; align-left: true; label: @tr("Add dropped music"); caption: @tr("Add"); clicked => { root.choose(0); } }
+                ActionButton { compact: true; quiet: true; show-icon: false; align-left: true; label: @tr("Replace library"); caption: @tr("Replace"); clicked => { root.choose(1); } }
+            }
+        }
+    }
+}

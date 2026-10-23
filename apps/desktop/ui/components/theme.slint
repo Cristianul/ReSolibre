@@ -1,0 +1,66 @@
+// Semantic tokens shared by both built-in palettes and all player surfaces.
+export global Theme {
+    out property <color> shell: #252729;
+    out property <color> panel: #151819;
+    out property <color> raised: #303436;
+    out property <color> hover: #3b4142;
+    out property <color> edge: #454b4c;
+    out property <color> recess: #0c0f10;
+    out property <color> rim: #555d5e;
+    out property <color> metal: #d1d8d4;
+    out property <color> text: #eef2ef;
+    out property <color> muted: #a6b1ac;
+    out property <color> accent: #6fe579;
+    out property <color> spectrum-accent: #65d7ed;
+    out property <color> spectrum-selected: #263c47;
+    out property <color> selected: #223c2e;
+    out property <color> focus: #b3d8ff;
+    out property <color> tempo-zone: #294957;
+    out property <color> tempo-alternate: #3e3c5b;
+    out property <color> mix-region: #ed784f;
+    out property <color> mix-hatch: #883f2b;
+    out property <color> skipped: #d9b95a;
+    out property <color> error: #ffbdad;
+    // Reference-matched materials; focus and active indicators remain solid colors.
+    out property <brush> window-bevel: @linear-gradient(145deg, #454b4d 0%, #303638 32%, #161a1c 100%);
+    out property <brush> case-side: @linear-gradient(180deg, #303638 0%, #1b2022 100%);
+    out property <brush> faceplate: @linear-gradient(155deg, #2d3235 0%, #272c2f 45%, #22272a 100%);
+    out property <brush> drawer: @linear-gradient(180deg, #343a3d 0%, #292e31 18%, #202528 85%, #181c1e 100%);
+    out property <brush> eq-faceplate: @linear-gradient(150deg, #222729 0%, #191d1f 55%, #161a1b 100%);
+    out property <brush> key-edge: @linear-gradient(160deg, #50575a 0%, #353c3f 38%, #22282b 100%);
+    out property <brush> key-cap: @linear-gradient(180deg, #363d40 0%, #30373a 45%, #2a3033 100%);
+    out property <brush> key-down: @linear-gradient(180deg, #252b2e 0%, #2d3437 100%);
+    out property <brush> chassis: @linear-gradient(155deg, #3c3e40 0%, #292b2d 45%, #202224 100%);
+    out property <brush> inset: @linear-gradient(180deg, #101314 0%, #1d2122 100%);
+    out property <brush> choice-face: @linear-gradient(180deg, #25292a 0%, #1a1e1f 55%, #202425 100%);
+    out property <brush> spectrum-progress: @linear-gradient(90deg,
+        Theme.band-color(3, true) 0%, Theme.band-color(5, true) 35%,
+        Theme.band-color(7, true) 70%,
+        Theme.band-color(9, true) 100%);
+    out property <brush> button: @linear-gradient(180deg, #353b3e 0%, #2e3437 48%, #262c2f 100%);
+    out property <brush> bevel: @linear-gradient(150deg, #666c6d 0%, #363c3e 35%, #171c1e 100%);
+    out property <brush> silver: @conic-gradient(from 20deg, #a0a4a3 0deg, #c9ccca 65deg, #8d9291 145deg, #bec2c0 245deg, #a0a4a3 360deg);
+    out property <brush> dark-metal: @conic-gradient(from 20deg, #272c2e 0deg, #414749 65deg, #24292b 145deg, #3c4244 245deg, #272c2e 360deg);
+    out property <brush> fader: @linear-gradient(180deg, #dedfdd 0%, #bfc3c1 12%, #b6bab8 68%, #d0d2cf 100%);
+    out property <length> title-scroll-speed: 24px; // Logical pixels per second, shared by both hosts.
+    out property <duration> title-scroll-pause: 1000ms;
+    out property <length> queue-row-height: 36px;
+    out property <length> gap: 12px;
+    out property <length> radius: 10px;
+    out property <length> window-radius: 6px;
+    out property <length> icon-size: 20px;
+
+    // A single palette map serves the EQ bank and the segmented volume dial.
+    public pure function band-color(index: int, spectrum: bool) -> color {
+        if !spectrum { return Theme.accent; }
+        if index < 2 { return #ff9654; }
+        if index == 2 { return #ff675a; }
+        if index == 3 { return #f74f90; }
+        if index == 4 { return #ee36c7; }
+        if index == 5 { return #b74ee8; }
+        if index == 6 { return #7853f2; }
+        if index == 7 { return #397deb; }
+        if index == 8 { return #35bde1; }
+        return #35cbe8;
+    }
+}

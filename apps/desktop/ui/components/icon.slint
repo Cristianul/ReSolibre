@@ -1,0 +1,10 @@
+import { Theme } from "theme.slint";
+
+// Built-in control glyphs pass through this Lucide wrapper; branding uses BrandLogo.
+export component Icon inherits Image {
+    width: Theme.icon-size;
+    height: Theme.icon-size;
+    colorize: Theme.text;
+    image-fit: contain;
+    accessible-role: none;
+}

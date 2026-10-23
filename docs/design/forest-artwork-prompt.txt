@@ -1,0 +1,7 @@
+ReSolibre built-in forest illustration
+Generated using the built-in image generation tool on 2026-10-22.
+Original asset: apps/desktop/ui/assets/forest-artwork.png (1254 x 1254 RGB PNG).
+Purpose: bundled neutral illustration, not track or album metadata.
+
+Exact prompt:
+Use case: stylized-concept. Asset type: original square built-in background illustration for the left artwork panel of the ReSolibre desktop music player. Create an atmospheric lush emerald forest, layered angular painterly foliage and dark tree trunks framing a soft narrow shaft of mint daylight in the center, sophisticated album-art composition, tactile fine painted detail, deep forest greens with restrained pale green highlights. Full bleed square composition, readable as a small 200px thumbnail, rich dark edges, no people or animals. No text, letters, logos, borders, interface elements, instruments or watermark. This is a neutral application illustration, not a specific album cover. Output one square image, ideally 512 by 512 pixels.

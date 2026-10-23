@@ -1,0 +1,367 @@
+import { EqPresetDialog } from "components/eq-preset-dialog.slint";
+import { AppMenu, ResetDialog } from "components/app-menu.slint";
+import { ImportMenu } from "components/import-menu.slint";
+import { Branding } from "components/branding.slint";
+export { Branding }
+import { EqualizerPanel, EqBand } from "components/equalizer-panel.slint";
+export { EqBand }
+import { TrackRow, AnalysisRow } from "components/playlist-panel.slint";
+import { PlaylistWindow } from "playlist-window.slint";
+export { TrackRow, AnalysisRow, PlaylistWindow }
+import { ThemesWindow } from "themes-window.slint";
+export { ThemesWindow }
+import { AnalysisWindow, TempoZone } from "analysis-window.slint";
+export { AnalysisWindow, TempoZone }
+import { WindowHeader, WindowSurface, PulloutDrawer } from "components/window-header.slint";
+import { CollectionArtwork } from "components/instruments.slint";
+import { LosslessBadge } from "components/lossless-badge.slint";
+import { LiveSpectrum } from "components/live-spectrum.slint";
+import { Theme } from "components/theme.slint";
+import { ActionButton, TransportButton, ControlSlider, PanelKey } from "components/controls.slint";
+
+
+export enum RepeatState { off, all, one }
+
+
+// Main desktop surface; all playlist views share the same queue model/actions.
+export component PlayerWindow inherits Window {
+    title: "ReSolibre";
+    icon: Branding.logo;
+    no-frame: true;
+    resize-border-width: 6px;
+    preferred-width: 800px;
+    preferred-height: root.window-height-for-eq(root.eq-expanded || root.eq-reveal > 0);
+    min-width: 760px;
+    // Relax the constraint at close intent; the native resize waits for the slide to finish.
+    min-height: root.window-height-for-eq(root.eq-expanded);
+    background: transparent;
+    default-font-family: "Sans Serif";
+    default-font-size: 14px;
+    in property <string> track-title: @tr("Your music. Ready when you are.");
+    in property <bool> analysis-enabled;
+    callback open-analysis();
+    callback reanalyze-current();
+    callback focus-analysis();
+    focus-analysis => { analysis-button.focus(); }
+    in property <image> cover-image;
+    in property <bool> has-cover;
+    in property <bool> cover-loading;
+    in property <string> state-label: @tr("Open a local audio file to begin");
+    in property <string> time-label: "—:—";
+    in property <string> duration-label: "—:—";
+    in property <string> error-message;
+    in property <float> position: 0;
+    in property <float> duration: 1;
+    in property <[EqBand]> eq-bands;
+    in property <bool> eq-enabled;
+    in property <bool> trim-enabled;
+    in property <bool> trim-regions;
+    in property <int> fade-mode;
+    in property <bool> mix-enabled;
+    in property <string> mix-caption;
+    in property <float> mix-start;
+    in property <float> mix-end;
+    callback toggle-mix();
+    in property <float> trim-start;
+    in property <float> trim-end;
+    callback toggle-trim();
+    callback cycle-fade();
+    in property <float> eq-preamp;
+    in property <float> eq-preamp-minimum;
+    in property <float> eq-preamp-maximum;
+    in property <[string]> eq-presets;
+    in property <bool> eq-store-busy: true;
+    callback eq-band(int, float);
+    callback eq-gain(float);
+    callback eq-enable(bool);
+    callback eq-load(int);
+    callback eq-save();
+    callback eq-commit-preset(string, bool);
+    callback eq-cancel-preset();
+    callback eq-transfer(bool);
+    in-out property <int> eq-preset-index;
+    in-out property <string> eq-preset-name;
+    in property <string> eq-preset-message;
+    in property <string> eq-notice;
+    in-out property <bool> eq-replace-confirm;
+    in property <bool> eq-dialog-open;
+    in property <float> volume: 50;
+    in property <string> technical-info;
+    in property <string> technical-details;
+    in property <bool> lossless;
+    private property <bool> show-lossless: root.lossless && root.technical-info != ""
+        && root.error-message == "" && root.playlist-error == "" && root.theme-error == "" && root.import-status == "";
+    in property <[float]> live-levels;
+    in property <bool> live-available;
+    in property <bool> playing: false;
+    in-out property <bool> spectrum: false;
+    in property <bool> shuffle: false;
+    in property <RepeatState> repeat-mode: off;
+    in property <bool> can-play: false;
+    in property <bool> can-seek: false;
+    in property <bool> can-previous: false;
+    in property <bool> previous-navigates: false;
+    in property <bool> can-next: false;
+    in property <bool> closing: false;
+    in property <bool> settings-loading: false;
+    in property <bool> picking: false;
+    in property <[TrackRow]> tracks;
+    in property <[AnalysisRow]> analysis-states;
+    in property <bool> analysis-busy;
+    in property <string> analysis-summary;
+    callback analyze-track(string);
+    callback analyze-all();
+    callback cancel-library-analysis();
+    in property <string> library-duration: "00:00";
+    in property <int> current: -1;
+    in-out property <bool> eq-expanded: true;
+    in property <bool> reduced-motion: false;
+    in property <bool> initializing: false;
+    out property <duration> drawer-duration: root.reduced-motion || root.initializing ? 0ms : 300ms;
+    out property <float> eq-reveal: root.eq-expanded ? 1 : 0;
+    animate eq-reveal { duration: root.drawer-duration; easing: cubic-bezier(0.4, 0, 0.2, 1); }
+    in property <bool> playlist-visible: false;
+    in-out property <bool> playlist-requested: true;
+    in property <string> playlist-error;
+    in property <string> theme-error;
+    callback open-themes();
+    in-out property <bool> app-menu-open;
+    in-out property <bool> reset-confirm;
+    in property <string> reset-failure;
+    callback reset-application();
+    callback select-theme(bool);
+    callback toggle-playlist();
+    callback begin-group-move() -> bool;
+    callback update-group-move();
+    callback end-group-move();
+    callback reveal-current();
+    in property <bool> drop-menu;
+    in property <bool> drop-playlist;
+    in property <float> drop-x: 24;
+    in property <float> drop-y: 48;
+    in property <string> import-status;
+    callback drop-choice(int);
+    callback open-files();
+    callback add-files();
+    callback play-pause();
+    callback stop();
+    callback previous();
+    callback next();
+    callback scan-pressed();
+    callback scan-started(bool);
+    callback scan-ended();
+    callback toggle-shuffle();
+    callback cycle-repeat();
+    callback seek(float);
+    callback seek-started();
+    callback seek-ended();
+    callback change-volume(float);
+    callback glide-volume(float);
+    callback select-track(string);
+    callback remove-track(string);
+    callback move-track(string, bool);
+    callback reorder-track(string, string, bool);
+    callback eq-visibility-changed(bool);
+
+    // One source of heights for the fixed EQ drawer, native resizing and tests.
+    public pure function window-height-for-eq(expanded: bool) -> length {
+        return expanded ? 516px : 264px;
+    }
+
+    // Visibility never changes the audio bypass state or the separate playlist.
+    public function toggle-equalizer() {
+        root.eq-expanded = !root.eq-expanded;
+        root.eq-visibility-changed(root.eq-expanded);
+        eq-tab.focus();
+    }
+
+    // Returns keyboard focus when the separate playlist is hidden.
+    public function focus-playlist() { playlist-tab.focus(); }
+
+    // Restores keyboard focus when the chooser closes.
+    public function focus-themes() { themes-menu.focus(); }
+
+    // Paint the drawer first: the stationary player occludes its top throughout the slide.
+    if root.eq-expanded || root.eq-reveal > 0: Rectangle {
+        x: 12px;
+        width: root.width - 24px;
+        height: max(258px, root.height - root.window-height-for-eq(false) + 6px);
+        y: root.window-height-for-eq(false) - 6px - (1 - root.eq-reveal) * (self.height - 6px);
+        PulloutDrawer { }
+        EqualizerPanel {
+            x: 8px; y: 12px; width: parent.width - 16px; height: parent.height - 24px;
+            spectrum: root.spectrum;
+            preamp-minimum: root.eq-preamp-minimum; preamp-maximum: root.eq-preamp-maximum;
+            bands: root.eq-bands; eq-enabled: root.eq-enabled; preamp: root.eq-preamp;
+            presets: root.eq-presets; store-busy: root.eq-store-busy;
+            preset-index <=> root.eq-preset-index; notice: root.eq-notice;
+            enabled: (!root.closing && !root.settings-loading) && root.eq-expanded;
+            change-band(index, value) => { root.eq-band(index, value); }
+            change-preamp(value) => { root.eq-gain(value); }
+            set-enabled(value) => { root.eq-enable(value); }
+            load-preset(index) => { root.eq-load(index); }
+            save-preset => { root.eq-save(); }
+        }
+    }
+    // Explicit origin prevents toolkit centering from placing the main controls over the drawer.
+    Rectangle {
+        x: 0px; y: 0px; width: root.width;
+        height: root.window-height-for-eq(false);
+        WindowSurface { }
+        VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+            WindowHeader {
+                begin-group-move => { root.begin-group-move() }
+                update-group-move => { root.update-group-move(); }
+                end-group-move => { root.end-group-move(); }
+                enabled: !root.closing;
+                maximized: root.maximized;
+                minimize => { root.minimized = true; }
+                toggle-maximize => { root.maximized = !root.maximized; }
+                request-close => { root.close(); }
+                themes-menu := ActionButton { width: 32px; compact: true; quiet: true; icon: @image-url("assets/menu.svg"); label: @tr("Application menu"); enabled: (!root.closing && !root.settings-loading); clicked => { root.app-menu-open = !root.app-menu-open; } }
+            }
+            HorizontalLayout {
+                height: 206px; spacing: 12px;
+                Rectangle {
+                    width: 206px; height: 206px;
+                    CollectionArtwork { width: parent.width; height: parent.height; artwork: root.cover-image; has-cover: root.has-cover; loading: root.cover-loading; }
+                    artwork-hover := TouchArea { }
+                    analysis-button := ActionButton {
+                        x: parent.width - self.width - 8px; y: parent.height - self.height - 8px;
+                        width: 100px; height: 32px; compact: true;
+                        label: @tr("Analyze track: spectrogram and BPM"); caption: @tr("Analyze");
+                        icon: @image-url("assets/search.svg");
+                        enabled: root.analysis-enabled && !root.closing && !root.settings-loading;
+                        opacity: artwork-hover.has-hover || self.hovered || self.focused ? 1 : 0;
+                        clicked => { root.open-analysis(); }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 4px;
+                    Rectangle {
+                        height: 46px;
+                        VerticalLayout {
+                            spacing: 2px;
+                            ActionButton { list-entry: true; background: transparent; content-padding: 0px; compact: true; show-icon: false; align-left: true; caption-size: 25px; caption-weight: 600; caption: root.track-title; scroll-caption: true; animate-caption: !root.reduced-motion && !root.minimized && !root.eq-dialog-open; label: @tr("Show current track in library"); enabled: (!root.closing && !root.settings-loading); clicked => { root.reveal-current(); } }
+                            HorizontalLayout {
+                                spacing: 7px;
+                                if root.show-lossless: LosslessBadge { spectrum: root.spectrum; }
+                                Text {
+                                text: root.error-message != "" ? root.error-message : root.playlist-error != "" ? root.playlist-error : root.theme-error != "" ? root.theme-error : root.import-status != "" ? root.import-status : root.technical-info != "" ? (root.show-lossless ? root.technical-details : root.technical-info) : root.state-label;
+                                color: root.error-message != "" || root.playlist-error != "" || root.theme-error != "" ? Theme.error : Theme.muted;
+                                font-size: 12px; overflow: elide; vertical-alignment: center; accessible-live-region: polite;
+                                }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 4px; height: 28px;
+                        Text { text: root.time-label; color: Theme.text; font-size: 12px; vertical-alignment: center; min-width: 38px; }
+                        ControlSlider {
+                            label: @tr("Playback position"); minimum: 0; maximum: max(1, root.duration); step: 1;
+                            spectrum: root.spectrum;
+                            value: root.position; enabled: root.can-seek && (!root.closing && !root.settings-loading);
+                            skipped-start: root.trim-regions ? root.trim-start / max(1, root.duration) : 0;
+                            skipped-end: root.trim-regions ? root.trim-end / max(1, root.duration) : 1;
+                            mix-start: root.mix-start; mix-end: root.mix-end;
+                            drag-started => { root.seek-started(); }
+                            drag-ended => { root.seek-ended(); }
+                            changed(value) => { root.seek(value); }
+                        }
+                        Text { text: root.duration-label; color: Theme.muted; font-size: 12px; vertical-alignment: center; min-width: 38px; horizontal-alignment: right; }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px; height: 80px;
+                        play-button := TransportButton { diameter: 76px; primary: true; label: root.playing ? @tr("Pause") : @tr("Play"); icon: root.playing ? @image-url("assets/pause.svg") : @image-url("assets/play.svg"); enabled: root.can-play && (!root.closing && !root.settings-loading); clicked => { root.play-pause(); } }
+                        TransportButton {
+                            diameter: 48px; label: @tr("Previous track");
+                            icon: @image-url("assets/skip-back.svg");
+                            active: root.previous-navigates && (!root.closing && !root.settings-loading);
+                            signal: Theme.skipped;
+                            enabled: (root.can-previous || root.can-seek) && (!root.closing && !root.settings-loading);
+                            hold-enabled: root.can-seek && (!root.closing && !root.settings-loading);
+                            press-started => { root.scan-pressed(); }
+                            hold-started => { root.scan-started(false); }
+                            hold-ended => { root.scan-ended(); }
+                            clicked => { if root.can-previous { root.previous(); } }
+                        }
+                        TransportButton {
+                            diameter: 48px; label: @tr("Next track");
+                            icon: @image-url("assets/skip-forward.svg");
+                            enabled: (root.can-next || root.can-seek) && (!root.closing && !root.settings-loading);
+                            hold-enabled: root.can-seek && (!root.closing && !root.settings-loading);
+                            press-started => { root.scan-pressed(); }
+                            hold-started => { root.scan-started(true); }
+                            hold-ended => { root.scan-ended(); }
+                            clicked => { if root.can-next { root.next(); } }
+                        }
+                        TransportButton { diameter: 42px; label: @tr("Stop"); icon: @image-url("assets/stop.svg"); enabled: root.can-play && (!root.closing && !root.settings-loading); clicked => { root.stop(); } }
+                        LiveSpectrum { levels: root.live-levels; available: root.live-available; spectrum: root.spectrum; }
+                        ControlSlider {
+                            width: play-button.diameter; min-height: play-button.diameter;
+                            rotary: true; spectrum: root.spectrum; label: @tr("Application volume");
+                            default-value: 50; minimum: 0; maximum: 100; step: 1; value: root.volume;
+                            enabled: (!root.closing && !root.settings-loading);
+                            changed(value) => { root.change-volume(value); }
+                            glide-requested(value) => { root.glide-volume(value); }
+                        }
+                    }
+                    HorizontalLayout {
+                        height: 44px; spacing: 8px;
+                        PanelKey { legend: "SHFL"; label: root.shuffle ? @tr("Shuffle on") : @tr("Shuffle off"); active: root.shuffle; enabled: (!root.closing && !root.settings-loading); clicked => { root.toggle-shuffle(); } }
+                        PanelKey { legend: "REP"; mode-caption: root.repeat-mode == RepeatState.all ? "ALL" : root.repeat-mode == RepeatState.one ? "ONE" : ""; label: root.repeat-mode == RepeatState.off ? @tr("Repeat off") : root.repeat-mode == RepeatState.all ? @tr("Repeat all") : @tr("Repeat one"); active: root.repeat-mode != RepeatState.off; enabled: (!root.closing && !root.settings-loading); clicked => { root.cycle-repeat(); } }
+                        PanelKey { legend: "TRIM"; signal: Theme.skipped; label: root.trim-enabled ? @tr("Trim on") : @tr("Trim off"); active: root.trim-enabled; enabled: (!root.closing && !root.settings-loading); clicked => { root.toggle-trim(); } }
+                        PanelKey { legend: "FADE"; mode-caption: root.fade-mode == 1 ? "IN" : root.fade-mode == 2 ? "OUT" : root.fade-mode == 3 ? "IN/OUT" : ""; label: root.fade-mode == 1 ? @tr("Fade in") : root.fade-mode == 2 ? @tr("Fade out") : root.fade-mode == 3 ? @tr("Fade in and out") : @tr("Fade off"); active: root.fade-mode != 0; enabled: (!root.closing && !root.settings-loading); clicked => { root.cycle-fade(); } }
+                        PanelKey { legend: "MIX"; mode-caption: root.mix-caption; label: root.mix-enabled ? @tr("Mix on") : @tr("Mix off"); active: root.mix-enabled; enabled: (!root.closing && !root.settings-loading); clicked => { root.toggle-mix(); } }
+                        Rectangle { min-width: 8px; horizontal-stretch: 1; }
+                        // Decorative grouping only; the two keys retain independent focus and actions.
+                        Rectangle {
+                            width: 148px; height: 40px;
+                            Rectangle {
+                                y: -2px; width: parent.width; height: parent.height + 4px;
+                                border-width: 1px; border-color: Theme.edge; border-radius: 5px;
+                            }
+                            HorizontalLayout {
+                                padding-left: 6px; padding-right: 6px;
+                                spacing: 12px;
+                                eq-tab := PanelKey { legend: "EQ"; label: @tr("Equalizer"); active: root.eq-expanded; enabled: (!root.closing && !root.settings-loading); clicked => { root.toggle-equalizer(); } }
+                                playlist-tab := PanelKey { legend: "LIB"; label: @tr("Library"); active: root.playlist-visible; enabled: (!root.closing && !root.settings-loading); clicked => { root.toggle-playlist(); } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    ImportMenu {
+        visible: root.drop-menu && !root.drop-playlist;
+        anchor-x: root.drop-x; anchor-y: root.drop-y;
+        choose(choice) => { root.drop-choice(choice); }
+    }
+    if root.eq-dialog-open: EqPresetDialog {
+        name <=> root.eq-preset-name; message: root.eq-preset-message;
+        replace-confirm <=> root.eq-replace-confirm; busy: root.eq-store-busy || root.closing;
+        save(name, replace) => { root.eq-commit-preset(name, replace); }
+        cancel => { root.eq-cancel-preset(); }
+        transfer(export) => { root.eq-transfer(export); }
+    }
+
+    AppMenu {
+        visible: root.app-menu-open && !root.closing;
+        spectrum: root.spectrum;
+        dismiss => { root.app-menu-open = false; themes-menu.focus(); }
+        choose-theme(spectrum) => { root.select-theme(spectrum); root.app-menu-open = false; themes-menu.focus(); }
+        reset => { root.app-menu-open = false; root.reset-confirm = true; }
+    }
+    ResetDialog {
+        visible: root.reset-confirm || root.reset-failure != "";
+        failure: root.reset-failure;
+        cancel => { root.reset-confirm = false; themes-menu.focus(); }
+        confirm => { root.reset-application(); }
+        close-app => { root.close(); }
+    }
+
+}

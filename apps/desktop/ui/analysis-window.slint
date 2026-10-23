@@ -1,0 +1,103 @@
+import { TempoTimeline, TempoZone } from "components/tempo-timeline.slint";
+export { TempoZone }
+
+import { Theme } from "components/theme.slint";
+import { Branding } from "components/branding.slint";
+import { ActionButton } from "components/controls.slint";
+import { WindowHeader, WindowSurface } from "components/window-header.slint";
+
+export component AnalysisWindow inherits Window {
+    title: "ReSolibre · Track analysis";
+    icon: Branding.logo;
+    no-frame: true;
+    resize-border-width: 6px;
+    preferred-width: 780px; min-width: 680px;
+    preferred-height: 720px; min-height: 700px;
+    background: transparent;
+    default-font-family: "Sans Serif";
+    in property <string> track-title;
+    in property <string> facts;
+    in property <string> status-text;
+    in property <string> frequency-note;
+    in property <string> interpretation;
+    in property <string> tempo-text;
+    in property <[TempoZone]> tempo-zones;
+    private property <int> selected-tempo: -1;
+    out property <string> tempo-detail: root.selected-tempo >= 0 && root.selected-tempo < root.tempo-zones.length
+        ? root.tempo-zones[root.selected-tempo].details
+        : @tr("Tempo zones: hover or select an interval · gray = unknown");
+    callback reset-tempo-selection();
+    reset-tempo-selection => { root.selected-tempo = -1; }
+    in property <string> nyquist;
+    in property <string> half-nyquist;
+    in property <string> duration;
+    in property <image> plot;
+    in property <bool> ready;
+    in property <bool> running;
+    callback cancel-analysis();
+    callback retry-analysis();
+    WindowSurface { }
+    VerticalLayout {
+        padding: 12px; spacing: 8px;
+        WindowHeader {
+            title: @tr("Track analysis"); close-label: @tr("Close analysis"); maximized: root.maximized;
+            minimize => { root.minimized = true; }
+            toggle-maximize => { root.maximized = !root.maximized; }
+            request-close => { root.close(); }
+        }
+        Text { text: root.track-title; color: Theme.text; font-size: 19px; font-weight: 600; overflow: elide; }
+        Text { text: root.facts; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+        Text { text: root.status-text; color: Theme.text; font-size: 13px; accessible-live-region: polite; }
+        Text { text: root.frequency-note; color: Theme.muted; font-size: 11px; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout {
+                width: 64px;
+                Text { text: root.ready ? root.nyquist : "Hz"; color: Theme.muted; font-size: 11px; }
+                Rectangle { vertical-stretch: 1; }
+                Text { text: root.ready ? root.half-nyquist : ""; color: Theme.muted; font-size: 11px; }
+                Rectangle { vertical-stretch: 1; }
+                Text { text: "0 Hz"; color: Theme.muted; font-size: 11px; }
+            }
+            Rectangle {
+                min-height: 220px; vertical-stretch: 1; background: #080a10;
+                Image { source: root.plot; image-fit: fill; width: parent.width; height: parent.height; accessible-label: @tr("Full-track spectrogram: time from left to right, frequency from bottom to top"); }
+                for zone in root.tempo-zones: Rectangle {
+                    x: zone.start * parent.width; width: 1px; height: parent.height;
+                    background: Theme.text; opacity: 0.16;
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px; height: 28px;
+            Text { width: 64px; text: "BPM"; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+            TempoTimeline {
+                zones: root.tempo-zones; selected: root.selected-tempo;
+                inspect(index) => { root.selected-tempo = index; }
+            }
+        }
+        HorizontalLayout {
+            padding-left: 72px;
+            Text { text: "0:00"; color: Theme.muted; font-size: 11px; }
+            Rectangle { horizontal-stretch: 1; }
+            Text { text: root.duration; color: Theme.muted; font-size: 11px; }
+        }
+        HorizontalLayout {
+            padding-left: 72px; spacing: 10px;
+            Text { text: "−120 dBFS/bin"; color: Theme.muted; font-size: 11px; }
+            Rectangle { height: 10px; background: @linear-gradient(90deg, #080a10 0%, #292070 25%, #a83270 50%, #f98935 75%, #fff1a0 100%); }
+            Text { text: "0 dBFS/bin"; color: Theme.muted; font-size: 11px; }
+        }
+        Text {
+            text: root.tempo-detail;
+            color: Theme.text; font-size: 12px; wrap: word-wrap;
+            accessible-live-region: polite;
+        }
+        Text { text: root.tempo-text; color: Theme.text; font-size: 14px; wrap: word-wrap; }
+        Text { text: root.interpretation; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
+        HorizontalLayout {
+            Rectangle { horizontal-stretch: 1; }
+            ActionButton { width: 200px; caption: root.running ? @tr("Cancel") : @tr("Analyze current track"); label: root.running ? @tr("Cancel track analysis") : @tr("Analyze current track"); show-icon: false; clicked => { if root.running { root.cancel-analysis(); } else { root.retry-analysis(); } } }
+        }
+    }
+}

@@ -1,0 +1,62 @@
+import { Theme } from "components/theme.slint";
+import { Branding } from "components/branding.slint";
+import { ActionButton } from "components/controls.slint";
+import { DialFace } from "components/instruments.slint";
+import { WindowHeader, WindowSurface, DrawerSurface } from "components/window-header.slint";
+
+// Passive previews reuse the player materials; selection uses the shared accessible button.
+component ThemeOption inherits Rectangle {
+    in property <bool> spectrum;
+    in property <bool> selected;
+    callback choose();
+    border-radius: Theme.window-radius;
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : Theme.edge;
+    background: Theme.recess;
+    DrawerSurface { x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px; }
+    VerticalLayout {
+        padding: 12px; spacing: 10px;
+        Text { text: root.spectrum ? "Spectrum" : "Green"; color: Theme.text; font-size: 18px; font-weight: 600; horizontal-alignment: center; }
+        DialFace { height: 90px; fraction: 0.75; spectrum: root.spectrum; }
+        HorizontalLayout {
+            height: 12px; spacing: 4px;
+            for index in 10: Rectangle { background: root.spectrum ? Theme.band-color(index, true) : Theme.accent; border-radius: 2px; }
+        }
+        ActionButton {
+            label: root.spectrum ? @tr("Spectrum palette") : @tr("Green palette");
+            caption: root.selected ? @tr("Selected") : @tr("Use theme");
+            show-icon: false; active: root.selected;
+            clicked => { root.choose(); }
+        }
+    }
+}
+
+// On-demand theme picker; it owns no playback state and applies choices immediately.
+export component ThemesWindow inherits Window {
+    title: "ReSolibre · Themes";
+    icon: Branding.logo;
+    no-frame: true;
+    resize-border-width: 6px;
+    preferred-width: 480px; min-width: 440px;
+    preferred-height: 328px; min-height: 328px;
+    background: transparent;
+    default-font-family: "Sans Serif";
+    in property <bool> spectrum;
+    callback choose-theme(bool);
+    WindowSurface { }
+    VerticalLayout {
+        padding: 12px; spacing: 12px;
+        WindowHeader {
+            title: @tr("Themes"); close-label: @tr("Close themes"); maximized: root.maximized;
+            minimize => { root.minimized = true; }
+            toggle-maximize => { root.maximized = !root.maximized; }
+            request-close => { root.close(); }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            ThemeOption { spectrum: false; selected: !root.spectrum; choose => { root.choose-theme(false); } }
+            ThemeOption { spectrum: true; selected: root.spectrum; choose => { root.choose-theme(true); } }
+        }
+        Text { text: @tr("Changes apply immediately."); color: Theme.muted; font-size: 12px; horizontal-alignment: center; }
+    }
+}

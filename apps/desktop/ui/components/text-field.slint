@@ -1,0 +1,36 @@
+import { Theme } from "theme.slint";
+
+// Shared inset single-line editor, retaining native text selection, clipboard and IME.
+export component TextField inherits FocusScope {
+    in-out property <string> text;
+    in property <string> label;
+    in property <string> placeholder;
+    in property <bool> autofocus: false;
+    callback edited(string);
+    callback dismissed();
+    callback accepted();
+    // Return typing focus after a companion clear action.
+    public function focus-input() { input.focus(); }
+    init => { if root.autofocus { input.focus(); } }
+    key-pressed(event) => {
+        if event.text == Key.Escape { root.dismissed(); return accept; }
+        return reject;
+    }
+    Rectangle {
+        background: Theme.inset; border-radius: 4px;
+        border-width: 1px; border-color: Theme.edge;
+    }
+    Text {
+        x: 9px; width: parent.width - 18px; height: parent.height;
+        visible: root.text == ""; text: root.placeholder;
+        color: Theme.muted; font-size: 12px; vertical-alignment: center; overflow: elide;
+    }
+    input := TextInput {
+        x: 9px; width: parent.width - 18px; height: parent.height;
+        text <=> root.text; color: Theme.text; font-size: 12px;
+        single-line: true; vertical-alignment: center; enabled: root.enabled;
+        accessible-label: root.label;
+        edited => { root.edited(self.text); }
+        accepted => { root.accepted(); }
+    }
+}

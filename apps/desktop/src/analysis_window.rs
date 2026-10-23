@@ -1,0 +1,351 @@
+//! Grouped diagnostics retain one immutable inspected result independently of playback navigation.
+
+mod timeline;
+
+use crate::{AnalysisWindow, PlayerWindow, presentation::Controller};
+use resolibre_audio::session::{AnalysisStatus, Command, Snapshot};
+use resolibre_core::{
+    analysis::{ROWS, TrackAnalysis},
+    track_info::AudioCodec,
+};
+use slint::{ComponentHandle, Image, Rgb8Pixel, SharedPixelBuffer};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::Arc,
+};
+
+#[derive(Default)]
+pub(crate) struct AnalysisHost {
+    window: Option<AnalysisWindow>,
+    windows: crate::window_group::SharedGroup,
+    generation: Rc<Cell<Option<u64>>>,
+    rendered: Option<Arc<TrackAnalysis>>,
+    requested_revision: u64,
+    source_bits: Option<u8>,
+}
+
+impl AnalysisHost {
+    /// Opens the reusable grouped surface for a concrete track; UI text never acts as an input path.
+    fn show(
+        &mut self,
+        main: &PlayerWindow,
+        controller: &Rc<RefCell<Controller>>,
+        force: bool,
+    ) -> Result<(), &'static str> {
+        if self.window.is_none() {
+            let window = AnalysisWindow::new().map_err(|_| "Cannot create analysis window")?;
+            let weak = main.as_weak();
+            let view = window.as_weak();
+            let owner = Rc::downgrade(controller);
+            let target = Rc::clone(&self.generation);
+            window.window().on_close_requested(move || {
+                if let (Some(main), Some(view), Some(controller)) =
+                    (weak.upgrade(), view.upgrade(), owner.upgrade())
+                {
+                    let generation = target.get().unwrap_or(0);
+                    controller
+                        .borrow_mut()
+                        .submit(&main, Command::CancelAnalysis { generation });
+                    if view.hide().is_err() {
+                        eprintln!("warn: cannot hide analysis window");
+                    }
+                    main.invoke_focus_analysis();
+                }
+                slint::CloseRequestResponse::KeepWindowShown
+            });
+            let weak = main.as_weak();
+            let owner = Rc::downgrade(controller);
+            let target = Rc::clone(&self.generation);
+            window.on_cancel_analysis(move || {
+                if let (Some(main), Some(controller)) = (weak.upgrade(), owner.upgrade()) {
+                    let generation = target.get().unwrap_or(0);
+                    controller
+                        .borrow_mut()
+                        .submit(&main, Command::CancelAnalysis { generation });
+                }
+            });
+            let weak = main.as_weak();
+            window.on_retry_analysis(move || {
+                if let Some(main) = weak.upgrade() {
+                    main.invoke_reanalyze_current();
+                }
+            });
+            let events = crate::window_events::WindowEvents::new(window.window());
+            crate::window_group::WindowGroup::watch(&self.windows, &window, &events);
+            self.window = Some(window);
+        }
+        let snapshot = controller.borrow().snapshot();
+        self.generation.set(Some(snapshot.generation));
+        self.rendered = None;
+        let window = self
+            .window
+            .as_ref()
+            .ok_or("Cannot create analysis window")?;
+        window.set_track_title(
+            snapshot
+                .current
+                .and_then(|index| snapshot.tracks.get(index))
+                .map(|track| track.title.as_str())
+                .unwrap_or("No track")
+                .into(),
+        );
+        self.source_bits = snapshot.stream_info.and_then(|info| info.bits_per_sample);
+        window.set_frequency_note(
+            snapshot
+                .stream_info
+                .and_then(|info| info.sample_rate_hz)
+                .map(frequency_note)
+                .unwrap_or_default()
+                .into(),
+        );
+        window.set_plot(Image::default());
+        window.set_tempo_zones(Default::default());
+        window.invoke_reset_tempo_selection();
+        window.set_ready(false);
+        window.set_tempo_text("BPM: analyzing rhythmic changes…".into());
+        window.set_interpretation("Original decoded audio, before EQ and volume. Origin unknown; a lossless codec does not prove an originally lossless recording.".into());
+        window.set_facts(
+            snapshot
+                .stream_info
+                .map(|info| {
+                    format!(
+                        "{} · {}",
+                        crate::track_info::describe(info),
+                        compression(info.codec)
+                    )
+                })
+                .unwrap_or_else(|| "Stream information unavailable".into())
+                .into(),
+        );
+        window.set_status_text("Starting analysis…".into());
+        window.set_running(true);
+        let generation = snapshot.generation;
+        let command = if force {
+            Command::Analyze { generation }
+        } else {
+            Command::ViewAnalysis { generation }
+        };
+        {
+            let mut controller = controller.borrow_mut();
+            controller.submit(main, command);
+            self.requested_revision = controller.expected_revision();
+        }
+        window.show().map_err(|_| "Cannot show analysis window")?;
+        crate::window_snap::present(window.window());
+        Ok(())
+    }
+
+    /// Freezes a completed inspection until an explicit Analyze action selects a new result.
+    pub(crate) fn refresh(&mut self, snapshot: &Snapshot) {
+        let Some(window) = self
+            .window
+            .as_ref()
+            .filter(|window| window.window().is_visible())
+        else {
+            return;
+        };
+        if snapshot.revision < self.requested_revision || self.rendered.is_some() {
+            return;
+        }
+        if self.generation.get() != Some(snapshot.generation) {
+            window.set_running(false);
+            window.set_status_text(
+                "Playback changed before analysis completed. Analyze the current track to retry."
+                    .into(),
+            );
+            return;
+        }
+        window.set_running(matches!(snapshot.analysis, AnalysisStatus::Running { .. }));
+        match &snapshot.analysis {
+            AnalysisStatus::Running { decoded_seconds } => {
+                let progress =
+                    if let Some(duration) = snapshot.duration.filter(|value| *value > 0.0) {
+                        format!(
+                            "Analyzing original audio… {:.0}% ({decoded_seconds:.1} s decoded)",
+                            (decoded_seconds / duration * 100.0).min(99.0)
+                        )
+                    } else {
+                        format!("Analyzing original audio… {decoded_seconds:.1} s decoded")
+                    };
+                window.set_status_text(progress.into());
+                if let resolibre_audio::session::RhythmStatus::Ready(report) = &snapshot.rhythm {
+                    window.set_tempo_text(tempo_text(report).into());
+                }
+            }
+            AnalysisStatus::Complete(report) => {
+                window.set_plot(render(report));
+                window.set_tempo_zones(timeline::zones(report));
+                window.set_ready(true);
+                window.set_nyquist(
+                    format!("{:.2} kHz", f64::from(report.sample_rate_hz) / 2000.0).into(),
+                );
+                window.set_half_nyquist(
+                    format!("{:.1} kHz", f64::from(report.sample_rate_hz) / 4000.0).into(),
+                );
+                window.set_duration(
+                    format!(
+                        "{}:{:02}",
+                        report.duration_seconds as u64 / 60,
+                        report.duration_seconds as u64 % 60
+                    )
+                    .into(),
+                );
+                window.set_status_text(
+                    format!("Complete · {:.1} s analyzed", report.duration_seconds).into(),
+                );
+                window.set_frequency_note(frequency_note(report.sample_rate_hz).into());
+                window.set_tempo_text(tempo_text(&report.tempo).into());
+                let precision = self
+                    .source_bits
+                    .map(|bits| format!("Source bit depth: {bits}-bit."))
+                    .unwrap_or_else(|| "Source bit depth: unknown for this format.".into());
+                let bandwidth = report.sustained_bandwidth_hz.map(|hz| format!("Sustained spectral extent: approximately {:.1} kHz.", hz / 1000.0)).unwrap_or_else(|| "Sustained spectral extent: inconclusive (silence, very short or weak audio).".into());
+                window.set_interpretation(format!("{bandwidth} This describes measured frequency content, not listening quality. Filtering, instruments, recording and lossy encoding can all limit bandwidth. {precision} Origin unknown, including for FLAC. Half/double tempo and downbeat interpretation require review before automatic mixing.").into());
+                self.rendered = Some(Arc::clone(report));
+            }
+            AnalysisStatus::Cancelled | AnalysisStatus::Unavailable => {
+                window.set_ready(false);
+                window.set_plot(Image::default());
+                window.set_tempo_text("BPM: not available".into());
+                self.rendered = None;
+                let message = if matches!(snapshot.analysis, AnalysisStatus::Cancelled) {
+                    "Analysis cancelled. No partial result is used."
+                } else {
+                    "Analysis unavailable: decoder, changed source or resource limit. Playback continues; retry is available."
+                };
+                window.set_status_text(message.into());
+            }
+            AnalysisStatus::Idle => {}
+        }
+    }
+
+    /// Releases the window and image during main-window shutdown; the session cancels/reaps its decoder.
+    pub(crate) fn close(&mut self) {
+        self.rendered = None;
+        if let Some(window) = self.window.take()
+            && window.hide().is_err()
+        {
+            eprintln!("warn: cannot hide analysis window during shutdown");
+        }
+    }
+}
+
+/// Distinguishes encoding from recording provenance; mixed-mode codecs stay unknown without stream evidence.
+fn compression(codec: AudioCodec) -> &'static str {
+    use resolibre_core::track_info::CompressionKind;
+    match codec.compression() {
+        CompressionKind::Lossless => "Lossless codec; origin unknown",
+        CompressionKind::Lossy => "Lossy codec; origin unknown",
+        CompressionKind::Unknown => "Compression mode unknown; origin unknown",
+    }
+}
+
+/// Labels algorithm output as an estimate and preserves unknown/variable states instead of averaging them away.
+pub(crate) fn tempo_text(report: &resolibre_core::analysis::tempo::TempoReport) -> String {
+    if report.variable {
+        if let Some((minimum, maximum)) = report.bpm_range() {
+            return format!(
+                "≈ {minimum:.1}–{maximum:.1} BPM · local estimates vary across the track"
+            );
+        }
+        return "BPM: inconclusive — no usable local tempo estimates".into();
+    }
+    let Some(bpm) = report.bpm else {
+        return "BPM: inconclusive — no sufficiently regular pulse measured".into();
+    };
+    let confidence = report
+        .segments
+        .iter()
+        .map(|segment| segment.confidence)
+        .fold(1.0_f64, f64::min);
+    let beats: usize = report
+        .segments
+        .iter()
+        .map(|segment| segment.beats.len())
+        .sum();
+    let alignment = if beats == 0 {
+        "beat alignment uncertain".to_owned()
+    } else {
+        format!("{beats} observed beats")
+    };
+    format!("≈ {bpm:.1} BPM · estimated · periodicity {confidence:.2}/1 · {alignment}")
+}
+
+/// Produces a fixed scientific heatmap from measured power, resampling time to the exact decoded duration.
+fn render(report: &TrackAnalysis) -> Image {
+    let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(512, ROWS as u32);
+    let stops = [
+        [8.0, 10.0, 16.0],
+        [41.0, 32.0, 112.0],
+        [168.0, 50.0, 112.0],
+        [249.0, 137.0, 53.0],
+        [255.0, 241.0, 160.0],
+    ];
+    for (index, pixel) in pixels.make_mut_slice().iter_mut().enumerate() {
+        let time = (index % 512) as f64 / 512.0 * report.duration_seconds;
+        let column = ((time / report.seconds_per_column) as usize).min(report.columns - 1);
+        let row = ROWS - 1 - index / 512;
+        let level = ((report.power_db[column * ROWS + row] + 120.0) / 120.0).clamp(0.0, 1.0) * 4.0;
+        let stop = (level as usize).min(3);
+        let mix = level - stop as f32;
+        let mut color = [0; 3];
+        for channel in 0..3 {
+            color[channel] =
+                (stops[stop][channel] * (1.0 - mix) + stops[stop + 1][channel] * mix) as u8;
+        }
+        *pixel = Rgb8Pixel::new(color[0], color[1], color[2]);
+    }
+    Image::from_rgb8(pixels)
+}
+
+/// Connects the artwork action once and retains only weak controller/window references in callbacks.
+pub(crate) fn connect(
+    main: &PlayerWindow,
+    controller: &Rc<RefCell<Controller>>,
+    windows: crate::window_group::SharedGroup,
+) -> Rc<RefCell<AnalysisHost>> {
+    let host = Rc::new(RefCell::new(AnalysisHost {
+        windows,
+        ..Default::default()
+    }));
+    main.on_open_analysis(open_action(main, controller, &host, false));
+    main.on_reanalyze_current(open_action(main, controller, &host, true));
+    host
+}
+
+/// Shares view eligibility and setup while dispatching exactly one cached-view or forced-analysis action.
+fn open_action(
+    main: &PlayerWindow,
+    controller: &Rc<RefCell<Controller>>,
+    host: &Rc<RefCell<AnalysisHost>>,
+    force: bool,
+) -> impl Fn() + 'static {
+    let weak = main.as_weak();
+    let owner = Rc::downgrade(controller);
+    let view = Rc::downgrade(host);
+    move || {
+        if let (Some(main), Some(controller), Some(host)) =
+            (weak.upgrade(), owner.upgrade(), view.upgrade())
+            && main.get_analysis_enabled()
+            && !main.get_closing()
+            && !main.get_settings_loading()
+            && let Err(error) = host.borrow_mut().show(&main, &controller, force)
+        {
+            main.set_error_message(error.into());
+            eprintln!("warn: {error}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;
+
+/// Explains why audio sample rate is twice the maximum frequency represented on the plot.
+fn frequency_note(rate: u32) -> String {
+    format!(
+        "Sample rate: {:.1} kHz · Frequency range: 0–{:.2} kHz (half the sample rate)",
+        f64::from(rate) / 1000.0,
+        f64::from(rate) / 2000.0
+    )
+}

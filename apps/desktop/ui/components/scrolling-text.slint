@@ -1,0 +1,44 @@
+import { Theme } from "theme.slint";
+
+// Shared overflow-only marquee: pause at each end, read the full text, then return smoothly.
+export component ScrollingText inherits Rectangle {
+    in property <string> text;
+    in property <length> font-size: 13px;
+    in property <int> font-weight: 400;
+    in property <brush> text-color: Theme.text;
+    in property <bool> active;
+    in property <bool> motion-enabled: true;
+    out property <length> overflow-width: max(0px, label.preferred-width - root.width);
+    out property <bool> running: root.active && root.motion-enabled && root.width > 0px && root.overflow-width > 0.5px;
+    out property <length> offset: root.running ? root.position-at((animation-tick() - root.started) / 1ms) : 0px;
+    private property <duration> started;
+    clip: true;
+    min-width: 0px;
+
+    // Restart after new content, changed metrics or activation so the beginning remains readable.
+    function restart() { root.started = animation-tick(); }
+    changed text => { root.restart(); }
+    changed overflow-width => { root.restart(); }
+    changed running => { root.restart(); }
+
+    // A bounded phase uses the frame clock, with no per-row timer while idle or offscreen.
+    pure function position-at(elapsed-ms: float) -> length {
+        let travel-ms = max(1000, root.overflow-width / Theme.title-scroll-speed * 1000);
+        let pause-ms = Theme.title-scroll-pause / 1ms;
+        let period-ms = 2 * (travel-ms + pause-ms);
+        let phase = elapsed-ms - floor(elapsed-ms / period-ms) * period-ms;
+        let progress = phase < pause-ms ? 0 : phase < pause-ms + travel-ms ? (phase - pause-ms) / travel-ms
+            : phase < 2 * pause-ms + travel-ms ? 1 : 1 - (phase - 2 * pause-ms - travel-ms) / travel-ms;
+        // Smoothstep keeps both departure and arrival gentle, without overshooting the last glyph.
+        return root.overflow-width * progress * progress * (3 - 2 * progress);
+    }
+
+    label := Text {
+        x: -root.offset; height: root.height;
+        width: root.running ? self.preferred-width : root.width;
+        text: root.text; font-size: root.font-size; font-weight: root.font-weight;
+        color: root.text-color; vertical-alignment: center;
+        // Intrinsic width shows the complete line during motion; the parent clips the viewport.
+        overflow: elide;
+    }
+}

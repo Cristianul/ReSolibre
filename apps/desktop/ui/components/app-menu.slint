@@ -1,0 +1,94 @@
+import { ActionButton } from "controls.slint";
+import { Theme } from "theme.slint";
+
+// One top-level menu; theme choices dispatch the existing shared selection action.
+export component AppMenu inherits Rectangle {
+    in property <bool> spectrum;
+    private property <bool> themes;
+    callback dismiss();
+    callback choose-theme(bool);
+    callback reset();
+    changed visible => { if root.visible { root.themes = false; first.focus(); } }
+    TouchArea { clicked => { root.dismiss(); } }
+    FocusScope {
+        x: parent.width - self.width - 100px; y: 42px;
+        width: 224px; height: root.themes ? 132px : 96px;
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                if root.themes { root.themes = false; first.focus(); } else { root.dismiss(); }
+                return accept;
+            }
+            return reject;
+        }
+        Rectangle {
+            background: Theme.inset; border-radius: 6px; border-width: 1px; border-color: Theme.edge;
+            VerticalLayout {
+                padding: 8px; spacing: 4px;
+                first := ActionButton {
+                    compact: true; quiet: true; show-icon: false; align-left: true;
+                    label: root.themes ? @tr("Back to application menu") : @tr("Theme submenu");
+                    caption: root.themes ? @tr("‹ Back") : @tr("Theme ›");
+                    clicked => { root.themes = !root.themes; }
+                }
+                if root.themes: ActionButton {
+                    compact: true; quiet: true; show-icon: false; align-left: true;
+                    active: !root.spectrum; label: @tr("Green palette"); caption: "Green";
+                    clicked => { root.choose-theme(false); }
+                }
+                if root.themes: ActionButton {
+                    compact: true; quiet: true; show-icon: false; align-left: true;
+                    active: root.spectrum; label: @tr("Spectrum palette"); caption: "Spectrum";
+                    clicked => { root.choose-theme(true); }
+                }
+                if !root.themes: ActionButton {
+                    compact: true; quiet: true; show-icon: false; align-left: true;
+                    label: @tr("Reset application data"); caption: @tr("Reset application data…");
+                    clicked => { root.reset(); }
+                }
+            }
+        }
+    }
+}
+
+// Explicit confirmation keeps removal of imported references separate from source-file deletion.
+export component ResetDialog inherits Rectangle {
+    in property <string> failure;
+    callback cancel();
+    callback confirm();
+    callback close-app();
+    background: #00000080;
+    changed visible => { if root.visible { cancel-button.focus(); } }
+    TouchArea { clicked => { if root.failure == "" { root.cancel(); } } }
+    FocusScope {
+        x: (parent.width - self.width) / 2; y: 52px;
+        width: min(540px, parent.width - 32px); height: 194px;
+        key-pressed(event) => {
+            if event.text == Key.Escape && root.failure == "" { root.cancel(); return accept; }
+            return reject;
+        }
+        Rectangle {
+            background: Theme.inset; border-width: 1px; border-color: Theme.edge; border-radius: 6px;
+            VerticalLayout {
+                padding: 16px; spacing: 12px;
+                Text { text: root.failure == "" ? @tr("Reset all ReSolibre data?") : @tr("Reset could not finish"); color: Theme.text; font-size: 18px; font-weight: 600; }
+                Text {
+                    text: root.failure == "" ? @tr("Remove imported library entries, analyses, cached metadata, saved EQ presets and all settings. Original music files are kept. ReSolibre will close; reopen it for a fresh start.") : root.failure;
+                    color: root.failure == "" ? Theme.muted : Theme.error;
+                    wrap: word-wrap; font-size: 13px;
+                }
+                HorizontalLayout {
+                    spacing: 12px;
+                    cancel-button := ActionButton {
+                        show-icon: false; label: root.failure == "" ? @tr("Cancel reset") : @tr("Close ReSolibre");
+                        caption: root.failure == "" ? @tr("Cancel") : @tr("Close ReSolibre");
+                        clicked => { if root.failure == "" { root.cancel(); } else { root.close-app(); } }
+                    }
+                    if root.failure == "": ActionButton {
+                        show-icon: false; label: @tr("Reset and close ReSolibre"); caption: @tr("Reset and close");
+                        clicked => { root.confirm(); }
+                    }
+                }
+            }
+        }
+    }
+}

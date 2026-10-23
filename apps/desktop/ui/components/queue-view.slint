@@ -1,0 +1,190 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { ActionButton } from "controls.slint";
+import { QueueRow } from "queue-row.slint";
+
+export struct AnalysisRow { id: string, status: int }
+
+export struct TrackRow { id: string, title: string, number: string, search-text: string, duration: string }
+
+// Owns presentation selection and a cancellable drag; only release dispatches a queue edit.
+export component QueueView inherits FocusScope {
+    in property <[TrackRow]> tracks;
+    in property <[AnalysisRow]> analysis-states;
+    pure callback analysis-state([AnalysisRow], string) -> int;
+    callback analyze(string);
+    in property <int> current: -1;
+    in property <bool> playing;
+    in property <bool> motion-enabled: true;
+    in property <bool> spectrum;
+    in-out property <length> scroll: 0px;
+    in-out property <string> selected-id;
+    pure callback locate-track(string) -> int;
+    callback play(string);
+    callback remove(string);
+    callback reorder(string, string, bool);
+    private property <string> pressed-id;
+    private property <bool> dragging;
+    private property <bool> suppress-double;
+    private property <int> insertion: -1;
+    private property <string> menu-id;
+    private property <length> menu-x;
+    private property <length> menu-y;
+    private property <length> press-y;
+
+    // Resolve identities against the latest bounded model, never against display titles.
+    pure function index-of(id: string) -> int {
+        return root.locate-track(id);
+    }
+    // Hit testing uses the same fixed row height as the virtualized delegate.
+    pure function row-at(y: length) -> int {
+        return floor((y - root.scroll) / Theme.queue-row-height);
+    }
+    // Cancel pending UI work without submitting edits or changing audio.
+    public function cancel() {
+        root.pressed-id = ""; root.dragging = false; root.insertion = -1;
+        root.menu-id = ""; root.suppress-double = true;
+    }
+    // Reveal the current occurrence only on explicit request, preserving normal browsing scroll.
+    public function reveal-current() {
+        root.cancel();
+        if root.current >= 0 && root.current < root.tracks.length {
+            root.selected-id = root.tracks[root.current].id;
+            root.scroll = clamp(-root.current * Theme.queue-row-height + (root.height - Theme.queue-row-height) / 2,
+                min(0px, root.height - root.tracks.length * Theme.queue-row-height), 0px);
+        }
+        root.focus();
+    }
+    // Clamp scrolling and recompute the insertion marker after autoscroll.
+    function scroll-by(delta: length) {
+        root.scroll = clamp(root.scroll + delta, min(0px, root.height - root.tracks.length * Theme.queue-row-height), 0px);
+    }
+    // A drop describes a stable neighbour identity, not an index that may become stale.
+    function finish-drag() {
+        if root.dragging && root.insertion >= 0 && root.tracks.length > 0 {
+            if touch.mouse-x >= 0px && touch.mouse-x <= touch.width && touch.mouse-y >= 0px && touch.mouse-y <= root.height {
+                let target = min(root.insertion, root.tracks.length - 1);
+                root.reorder(root.pressed-id, root.tracks[target].id, root.insertion == root.tracks.length);
+            }
+        }
+        root.pressed-id = ""; root.dragging = false; root.insertion = -1;
+    }
+    // Delete removes a single queue occurrence; the source file is never touched.
+    function delete-menu-entry() {
+        let id = root.menu-id;
+        root.cancel();
+        if root.enabled && root.index-of(id) >= 0 { root.remove(id); }
+        root.focus();
+    }
+    // Analysis acts on this occurrence without selecting or starting its audio.
+    function analyze-menu-entry() {
+        let id = root.menu-id;
+        root.cancel();
+        if root.enabled && root.index-of(id) >= 0 { root.analyze(id); }
+        root.focus();
+    }
+    changed enabled => { if !root.enabled { root.cancel(); } }
+    changed tracks => {
+        root.cancel();
+        if root.index-of(root.selected-id) < 0 { root.selected-id = ""; }
+    }
+    focus-lost(reason) => { root.pressed-id = ""; root.dragging = false; root.insertion = -1; root.suppress-double = true; }
+    key-pressed(event) => {
+        if event.text == Key.Escape { root.cancel(); root.focus(); return accept; }
+        if event.text == Key.Return && root.index-of(root.selected-id) >= 0 {
+            root.play(root.selected-id); return accept;
+        }
+        if event.text == Key.Delete && root.index-of(root.selected-id) >= 0 {
+            root.remove(root.selected-id); return accept;
+        }
+        if event.text == Key.UpArrow || event.text == Key.DownArrow {
+            let next = clamp(root.index-of(root.selected-id) + (event.text == Key.DownArrow ? 1 : -1), 0, root.tracks.length - 1);
+            if root.tracks.length > 0 {
+                root.selected-id = root.tracks[next].id;
+                root.scroll = clamp(root.scroll, -next * Theme.queue-row-height, max(0px, root.height - Theme.queue-row-height) - next * Theme.queue-row-height);
+                root.scroll-by(0px);
+            }
+            return accept;
+        }
+        return reject;
+    }
+    ListView {
+        content-y <=> root.scroll;
+        for track[index] in root.tracks: QueueRow {
+            analysis-status: root.analysis-state(root.analysis-states, track.id);
+            title: track.title; duration: track.duration; number: track.number;
+            selected: root.selected-id == track.id; current: root.current == index;
+            playing: root.playing; motion-enabled: root.motion-enabled && !root.dragging; spectrum: root.spectrum;
+            hovered: touch.has-hover && root.row-at(touch.mouse-y) == index;
+            in-view: self.y + root.scroll + self.height > 0px && self.y + root.scroll < root.height;
+            enabled: root.enabled;
+            select => { root.selected-id = track.id; root.focus(); }
+        }
+    }
+    touch := TouchArea {
+        width: max(0px, root.width - 14px); height: root.height;
+        enabled: root.enabled;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.cancel { root.cancel(); }
+            if event.kind == PointerEventKind.down {
+                root.cancel(); root.focus();
+                let index = root.row-at(self.mouse-y);
+                if index >= 0 && index < root.tracks.length {
+                    root.selected-id = root.tracks[index].id;
+                    if event.button == PointerEventButton.left {
+                        root.pressed-id = root.selected-id; root.press-y = self.mouse-y;
+                        root.suppress-double = false;
+                    }
+                    if event.button == PointerEventButton.right {
+                        root.menu-id = root.selected-id;
+                        root.menu-x = self.mouse-x; root.menu-y = self.mouse-y;
+                    }
+                }
+            }
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.finish-drag(); }
+        }
+        moved => {
+            if root.pressed-id != "" && abs(self.mouse-y - root.press-y) > 6px {
+                root.dragging = true; root.suppress-double = true;
+            }
+            if root.dragging { root.insertion = clamp(round((self.mouse-y - root.scroll) / Theme.queue-row-height), 0, root.tracks.length); }
+        }
+        double-clicked => {
+            if !root.suppress-double && root.index-of(root.selected-id) >= 0 { root.play(root.selected-id); }
+        }
+        scroll-event(event) => { root.scroll-by(event.delta-y); return accept; }
+    }
+    Timer {
+        interval: 32ms;
+        running: root.dragging && (touch.mouse-y < 24px || touch.mouse-y > root.height - 24px);
+        triggered => {
+            root.scroll-by(touch.mouse-y < 24px ? 12px : -12px);
+            root.insertion = clamp(round((touch.mouse-y - root.scroll) / Theme.queue-row-height), 0, root.tracks.length);
+        }
+    }
+    if root.dragging: Rectangle {
+        y: clamp(root.insertion * Theme.queue-row-height + root.scroll, 0px, root.height - 2px);
+        height: 2px; width: touch.width; background: Theme.accent;
+    }
+    if root.menu-id != "": Rectangle {
+        TouchArea { clicked => { root.cancel(); root.focus(); } }
+        Rectangle {
+            x: clamp(root.menu-x, 0px, max(0px, root.width - self.width));
+            y: clamp(root.menu-y, 0px, max(0px, root.height - self.height));
+            width: 160px; height: 80px;
+            background: Theme.inset; border-radius: 5px; border-width: 1px; border-color: Theme.edge;
+            ActionButton {
+                x: 6px; y: 6px; width: parent.width - 12px; height: 32px;
+                compact: true; quiet: true; align-left: true;
+                icon: @image-url("../assets/analysis.svg"); caption: @tr("Analyze");
+                label: @tr("Analyze track"); clicked => { root.analyze-menu-entry(); }
+            }
+            ActionButton {
+                x: 6px; y: 42px; width: parent.width - 12px; height: 32px;
+                compact: true; quiet: true; align-left: true;
+                icon: @image-url("../assets/x.svg"); caption: @tr("Delete");
+                label: @tr("Delete from library"); clicked => { root.delete-menu-entry(); }
+            }
+        }
+    }
+}

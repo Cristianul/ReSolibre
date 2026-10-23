@@ -1,0 +1,35 @@
+import { Theme } from "theme.slint";
+import { ActionButton } from "controls.slint";
+
+export struct TempoZone {
+    start: float,
+    end: float,
+    caption: string,
+    details: string,
+    measured: bool,
+}
+
+// Source-time regions share the spectrum's horizontal scale and the standard button input behavior.
+export component TempoTimeline inherits Rectangle {
+    in property <[TempoZone]> zones;
+    in property <int> selected: -1;
+    callback inspect(int);
+    height: 28px;
+    background: Theme.recess;
+    clip: true;
+    for zone[index] in root.zones: ActionButton {
+        x: zone.start * root.width;
+        width: max(0px, (zone.end - zone.start) * root.width);
+        height: root.height; min-width: 0px; min-height: 0px;
+        compact: true; list-entry: true; show-icon: false; content-padding: 1px;
+        label: zone.details;
+        caption: self.width >= 40px ? zone.caption : "";
+        caption-size: 11px;
+        active: root.selected == index;
+        background: !zone.measured ? Theme.raised : mod(index, 2) == 0 ? Theme.tempo-zone : Theme.tempo-alternate;
+        border-width: 1px; border-color: Theme.recess; border-radius: 0px;
+        changed hovered => { if self.hovered { root.inspect(index); } }
+        changed focused => { if self.focused { root.inspect(index); } }
+        clicked => { root.inspect(index); }
+    }
+}

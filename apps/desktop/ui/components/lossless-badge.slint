@@ -1,0 +1,19 @@
+import { Theme } from "theme.slint";
+import { Icon } from "icon.slint";
+
+// A compact encoding badge; the continuous-loop glyph does not certify recording provenance.
+export component LosslessBadge inherits Rectangle {
+    in property <bool> spectrum;
+    width: 82px; height: 17px;
+    border-radius: 4px;
+    background: root.spectrum ? Theme.spectrum-selected : Theme.selected;
+    border-width: 1px;
+    border-color: root.spectrum ? Theme.spectrum-accent : Theme.accent;
+    accessible-role: text;
+    accessible-label: @tr("Lossless encoding; original recording provenance unknown");
+    HorizontalLayout {
+        padding-left: 5px; padding-right: 5px; spacing: 4px;
+        Icon { width: 16px; height: 16px; source: @image-url("../assets/lossless.svg"); colorize: root.spectrum ? Theme.spectrum-accent : Theme.accent; }
+        Text { text: "Lossless"; color: root.spectrum ? Theme.spectrum-accent : Theme.accent; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+    }
+}

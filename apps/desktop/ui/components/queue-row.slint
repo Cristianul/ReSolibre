@@ -1,0 +1,76 @@
+import { ScrollingText } from "scrolling-text.slint";
+import { Theme } from "theme.slint";
+import { Icon } from "icon.slint";
+
+// A virtualized occurrence: selection and the active audio marker are independent.
+export component QueueRow inherits Rectangle {
+    in property <string> title;
+    in property <int> analysis-status;
+    in property <string> duration;
+    in property <string> number;
+    in property <bool> selected;
+    in property <bool> hovered;
+    in property <bool> in-view: true;
+    in property <bool> current;
+    in property <bool> playing;
+    in property <bool> motion-enabled;
+    in property <bool> spectrum;
+    in property <bool> enabled: true;
+    callback select();
+    private property <bool> sway;
+    private property <bool> show-note: root.current && root.playing;
+    height: Theme.queue-row-height;
+    border-radius: 3px;
+    background: root.selected ? (root.spectrum ? Theme.spectrum-selected : Theme.selected) : transparent;
+    accessible-role: list-item;
+    accessible-label: root.number + " " + root.title;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.select(); } }
+    Timer {
+        running: root.current && root.playing && root.motion-enabled && root.enabled && root.in-view;
+        interval: 420ms;
+        triggered => { root.sway = !root.sway; }
+    }
+    if root.show-note: Icon {
+        x: number-label.x + number-label.width + 12px;
+        y: (parent.height - self.height) / 2; width: 16px; height: 16px;
+        source: @image-url("../assets/music-2.svg");
+        colorize: root.spectrum ? Theme.spectrum-accent : Theme.accent;
+        transform-rotation: root.current && root.playing && root.motion-enabled ? (root.sway ? 16deg : -16deg) : 0deg;
+        animate transform-rotation { duration: root.motion-enabled ? 420ms : 0ms; easing: ease-in-out; }
+    }
+    if root.analysis-status != 0: Icon {
+        x: duration-label.x - 26px; y: (parent.height - self.height) / 2; width: 18px; height: 18px;
+        source: @image-url("../assets/analysis.svg");
+        colorize: root.analysis-status == 3 ? (root.spectrum ? Theme.spectrum-accent : Theme.accent) : Theme.muted;
+        accessible-role: text;
+        accessible-label: root.analysis-status == 3 ? @tr("Analysis complete") : root.analysis-status == 4 ? @tr("Analysis failed") : root.analysis-status == 2 ? @tr("Analyzing") : @tr("Analysis queued");
+        if root.analysis-status == 4: Rectangle {
+            x: 9px; y: 9px; width: 12px; height: 12px;
+            border-radius: 6px; background: Theme.inset;
+            Icon { source: @image-url("../assets/x.svg"); colorize: Theme.error; }
+        }
+    }
+    number-label := Text {
+        x: 8px; width: self.preferred-width; height: parent.height;
+        text: root.number;
+        color: root.current ? (root.spectrum ? Theme.spectrum-accent : Theme.accent) : Theme.text;
+        font-size: 13px; vertical-alignment: center;
+    }
+    ScrollingText {
+        x: number-label.x + number-label.width + 12px + (root.show-note ? 24px : 0px);
+        width: max(0px, duration-label.x - self.x - (root.analysis-status != 0 ? 34px : 8px));
+        height: parent.height;
+        text: root.title;
+        text-color: root.current ? (root.spectrum ? Theme.spectrum-accent : Theme.accent) : Theme.text;
+        active: root.enabled && (root.hovered || root.selected || (root.current && root.playing));
+        motion-enabled: root.motion-enabled && root.in-view;
+    }
+    duration-label := Text {
+        x: parent.width - 80px; width: 72px; height: parent.height;
+        text: root.duration; color: Theme.muted; font-size: 12px;
+        horizontal-alignment: right; vertical-alignment: center;
+        overflow: elide;
+    }
+
+}

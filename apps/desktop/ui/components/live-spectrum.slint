@@ -1,0 +1,36 @@
+import { Theme } from "theme.slint";
+
+// Continuous diffused light on the chassis; heights are measured and smoothed outside the widget.
+export component LiveSpectrum inherits Rectangle {
+    in property <[float]> levels;
+    in property <bool> available;
+    in property <bool> spectrum;
+    horizontal-stretch: 1;
+    min-width: 52px;
+    height: 64px;
+    accessible-role: image;
+    accessible-label: available ? @tr("Live audio spectrum, low to high frequencies") : @tr("Live audio spectrum unavailable");
+    for level[index] in root.levels: Rectangle {
+        x: index * parent.width / 24;
+        y: 8px;
+        width: parent.width / 24;
+        height: parent.height - 16px;
+        property <color> light: Theme.band-color(index * 10 / 24, root.spectrum);
+        Rectangle {
+            x: 0px; width: parent.width;
+            height: max(0px, level * (parent.height - 4px) + 4px);
+            y: parent.height - self.height;
+            border-radius: self.width / 2;
+            opacity: level * 0.20;
+            background: @linear-gradient(90deg, transparent 0%, parent.light 50%, transparent 100%);
+        }
+        Rectangle {
+            x: parent.width * 0.26; width: parent.width * 0.48;
+            height: level * (parent.height - 4px);
+            y: parent.height - self.height - 2px;
+            border-radius: self.width / 2;
+            opacity: level * 0.8;
+            background: @linear-gradient(0deg, parent.light.with-alpha(0.25) 0%, parent.light 55%, parent.light.with-alpha(0.35) 100%);
+        }
+    }
+}

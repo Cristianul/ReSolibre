@@ -1,0 +1,43 @@
+# Cargo workspace output; do not ignore docs/architecture/target/.
+/target/
+
+# Native experiments, release packaging and generated reports.
+/build/
+/dist/
+/coverage/
+/test-results/
+
+# Disposable work, runtime profiles, catalogs, caches and test secrets.
+/tmp/
+/.local/
+/.cache/
+*.log
+
+# Environment secrets; safe examples are committed.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# IntelliJ workstation state.
+.idea/
+*.iml
+
+# VSCodium workstation state; shared project tooling may be committed.
+.vscode/*
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.code-workspace
+
+# Editor/OS artifacts for current Linux and planned Windows contributors.
+*~
+*.swp
+*.swo
+.directory
+Thumbs.db
+Desktop.ini
+
+# Documentation-checker bytecode.
+__pycache__/
+*.pyc

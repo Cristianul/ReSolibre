@@ -1,0 +1,423 @@
+import { ScrollingText } from "scrolling-text.slint";
+import { ComboBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+import { Icon } from "icon.slint";
+export { Icon }
+import { DialFace, HardwareFace, KeyFace, LinearSliderFace } from "instruments.slint";
+
+// Shared tactile button with keyboard and assistive-technology activation.
+export component ActionButton inherits Rectangle {
+    out property <bool> focused: focus.has-focus;
+    out property <bool> hovered: touch.has-hover;
+    in property <string> label;
+    in property <string> caption;
+    in property <bool> scroll-caption: false;
+    in property <bool> animate-caption: true;
+    in property <length> content-padding: root.compact ? 6px : 10px;
+    in property <image> icon;
+    in property <brush> icon-tint: root.primary ? #101813 : root.active && !root.round ? Theme.accent : Theme.text;
+    in property <bool> enabled: true;
+    in property <bool> active: false;
+    in property <bool> round: false;
+    in property <bool> primary: false;
+    in property <bool> align-left: false;
+    in property <bool> quiet: false;
+    in property <bool> compact: false;
+    in property <bool> show-icon: true;
+    in property <bool> switch-style: false;
+    in property <bool> list-entry: false;
+    in property <bool> indicator-only: false;
+    in property <color> signal: Theme.accent;
+    in property <int> caption-weight: 400;
+    in property <length> caption-size: root.compact ? 11px : 14px;
+    in property <bool> hold-enabled: false;
+    private property <bool> pointer-down: false;
+    private property <bool> held: false;
+    private property <bool> suppress-click: false;
+    callback press-started();
+    callback hold-started();
+    callback hold-ended();
+    callback clicked();
+
+    // End pointer capture without turning a long press or cancellation into navigation.
+    function finish-hold(cancelled: bool) {
+        root.pointer-down = false;
+        if cancelled { root.suppress-click = true; }
+        if root.held { root.held = false; root.hold-ended(); }
+    }
+    changed enabled => { if !root.enabled { root.finish-hold(true); } }
+    changed hold-enabled => { if !root.hold-enabled { root.finish-hold(true); } }
+    Timer {
+        interval: 350ms;
+        running: root.pointer-down && root.hold-enabled && !root.held;
+        triggered => {
+            root.held = true;
+            root.suppress-click = true;
+            root.hold-started();
+        }
+    }
+    min-width: root.compact ? 26px : 42px;
+    min-height: root.compact ? 26px : 42px;
+    // Focus routes actions without painting a focus ring; all ordinary keys have physical caps.
+    border-radius: 3px;
+    background: root.list-entry ? (root.active ? Theme.selected : touch.has-hover ? #ffffff09 : transparent) : transparent;
+    opacity: root.enabled ? 1 : 0.4;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    forward-focus: focus;
+    if root.round: HardwareFace {
+        width: parent.width; height: parent.height;
+        silver: root.primary; pressed: touch.pressed; hovered: touch.has-hover;
+    }
+    if root.active && root.round: Rectangle {
+        width: 5px; height: 5px; border-radius: 3px;
+        x: (parent.width - self.width) / 2; y: parent.height - 5px;
+        background: root.signal;
+    }
+    if !root.round && !root.switch-style && !root.list-entry: KeyFace {
+        pressed: touch.pressed; hovered: touch.has-hover;
+        latched: root.active; subtle: root.quiet;
+    }
+    if root.active && !root.round && !root.switch-style && !root.list-entry && !root.indicator-only: Rectangle {
+        width: 10px; height: 2px; border-radius: 1px;
+        x: (parent.width - self.width) / 2; y: parent.height - 5px;
+        background: root.signal;
+    }
+    if root.indicator-only: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 16px; height: 6px; border-radius: 3px;
+        background: #080d0e; border-width: 1px; border-color: #626a6c;
+        Rectangle {
+            x: 2px; y: 2px; width: parent.width - 4px; height: 2px;
+            border-radius: 1px; background: root.active ? root.signal : #283c30;
+        }
+    }
+    if root.switch-style: Rectangle {
+        x: 3px; y: (parent.height - self.height) / 2;
+        width: 32px; height: 19px; border-radius: 10px;
+        background: Theme.recess; border-width: 1px; border-color: #080a0b;
+        Rectangle {
+            x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px;
+            border-radius: 9px; background: root.signal; opacity: root.active ? 1 : 0.08;
+        }
+        Rectangle {
+            x: root.active ? parent.width - self.width - 2px : 2px; y: 2px;
+            width: 15px; height: 15px; border-radius: 8px;
+            background: Theme.silver;
+            border-width: 1px; border-color: #d3d8d6;
+            Rectangle { x: 6px; y: 3px; width: 2px; height: 7px; border-radius: 1px; background: root.active ? root.signal : #50585a; }
+        }
+    }
+    HorizontalLayout {
+        width: root.width; height: root.primary ? 32px : root.compact ? max(14px, root.caption-size * 1.2) : root.round ? 18px : Theme.icon-size;
+        y: (root.height - self.height) / 2;
+        padding-left: root.switch-style ? 40px : root.content-padding; padding-right: root.content-padding;
+        spacing: 8px;
+        alignment: root.align-left ? start : center;
+        if root.show-icon: Icon { width: root.primary ? 32px : root.compact ? 14px : root.round ? 18px : Theme.icon-size; height: self.width; source: root.icon; colorize: root.icon-tint; }
+        if root.caption != "" && !root.scroll-caption: Text {
+            text: root.caption;
+            font-size: root.caption-size; font-weight: root.caption-weight;
+            overflow: elide;
+            color: root.active && !root.switch-style ? root.signal : Theme.text;
+            vertical-alignment: center;
+        }
+    }
+    if root.caption != "" && root.scroll-caption: ScrollingText {
+        x: (root.switch-style ? 40px : root.content-padding)
+            + (root.show-icon ? (root.primary ? 32px : root.compact ? 14px : root.round ? 18px : Theme.icon-size) + 8px : 0px);
+        width: max(0px, root.width - self.x - root.content-padding);
+        height: root.primary ? 32px : root.compact ? max(14px, root.caption-size * 1.2) : root.round ? 18px : Theme.icon-size;
+        y: (root.height - self.height) / 2;
+        text: root.caption; font-size: root.caption-size; font-weight: root.caption-weight;
+        text-color: root.active && !root.switch-style ? root.signal : Theme.text;
+        active: root.enabled; motion-enabled: root.animate-caption;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        pointer-event(event) => {
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                focus.focus();
+                root.suppress-click = false;
+                root.pointer-down = true;
+                root.press-started();
+            }
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                root.finish-hold(false);
+            }
+            if event.kind == PointerEventKind.cancel { root.finish-hold(true); }
+        }
+        clicked => { if !root.suppress-click { focus.focus(); root.clicked(); } }
+    }
+    focus := FocusScope {
+        width: 0px;
+        enabled: root.enabled;
+        focus-lost(reason) => { root.finish-hold(true); }
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+// Silkscreen legend belongs to the chassis; the illuminated key reuses shared input and focus.
+export component PanelKey inherits Rectangle {
+    in property <color> signal: Theme.accent;
+    in property <string> mode-caption;
+    in property <string> label;
+    in property <string> legend;
+    in property <bool> active;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 62px; height: 40px;
+    forward-focus: key;
+    Text {
+        y: 0px; width: parent.width; height: 12px;
+        text: root.legend; font-size: 10px; font-weight: 600; letter-spacing: 1px;
+        color: Theme.muted; horizontal-alignment: center; accessible-role: none;
+    }
+    key := ActionButton {
+        x: 0px; y: 14px; width: parent.width; height: 26px;
+        compact: true; show-icon: false; indicator-only: root.mode-caption == ""; caption: root.mode-caption;
+        label: root.label; active: root.active; enabled: root.enabled; signal: root.signal;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Centers the shared tactile button in a transport row without a second input implementation.
+export component TransportButton inherits Rectangle {
+    in property <color> signal: Theme.accent;
+    in property <length> diameter: 44px;
+    in property <string> label;
+    in property <image> icon;
+    in property <bool> enabled: true;
+    in property <bool> active: false;
+    in property <bool> primary: false;
+    in property <bool> hold-enabled: false;
+    callback press-started();
+    callback hold-started();
+    callback hold-ended();
+    callback clicked();
+    width: root.diameter;
+    min-height: root.diameter;
+    ActionButton {
+        width: root.diameter; height: root.diameter;
+        y: (parent.height - self.height) / 2;
+        round: true; primary: root.primary; active: root.active;
+        signal: root.signal;
+        label: root.label; icon: root.icon; enabled: root.enabled;
+        hold-enabled: root.hold-enabled;
+        press-started => { root.press-started(); }
+        hold-started => { root.hold-started(); }
+        hold-ended => { root.hold-ended(); }
+        clicked => { root.clicked(); }
+    }
+}
+
+// Shared slider: separate drag preview from the worker-confirmed value.
+export component ControlSlider inherits Rectangle {
+    in property <string> label;
+    in property <bool> vertical: false;
+    in property <bool> rotary: false;
+    in property <bool> spectrum: false;
+    in property <bool> fill-track: !root.vertical || root.spectrum;
+    in property <color> accent: Theme.accent;
+    private property <float> drag-origin-value;
+    private property <length> drag-origin-x;
+    private property <length> drag-origin-y;
+    private property <bool> dial-click: false;
+    private property <bool> dial-moved: false;
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> step: 1;
+    in property <float> value: 0;
+    in property <float> default-value: 0;
+    in property <float> mix-start: 0;
+    in property <float> mix-end: 0;
+    in property <float> skipped-start: 0;
+    in property <float> skipped-end: 1;
+    // A bank may route captured pointer motion to a sibling without duplicating slider math.
+    in property <bool> grouped-drag: false;
+    in property <bool> group-active: false;
+    in property <float> group-value: 0;
+    callback drag-position(length, length, float);
+    callback drag-started();
+    callback drag-ended();
+    private property <bool> left-drag: false;
+    in property <bool> enabled: true;
+    private property <float> preview: root.value;
+    private property <float> shown: root.group-active ? root.group-value : !root.grouped-drag && root.left-drag && (!root.rotary || root.dial-moved) ? root.preview : root.value;
+    out property <float> displayed-value: root.shown;
+    out property <bool> interacting: touch.has-hover || root.left-drag || root.group-active || focus.has-focus;
+    callback changed(float);
+    callback glide-requested(float);
+    min-height: root.rotary ? 80px : root.vertical ? 80px : 28px;
+    min-width: root.rotary ? 80px : root.vertical ? 28px : 60px;
+    private property <float> fraction: clamp((root.shown - root.minimum) / max(1, root.maximum - root.minimum), 0, 1);
+    opacity: root.enabled ? 1 : 0.4;
+    forward-focus: focus;
+    accessible-role: slider;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-value: root.shown;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value-step: root.step;
+    accessible-action-set-value(v) => { if v.is-float() { root.request-value(v.to-float()); } }
+    accessible-action-increment => { root.request-value(root.value + root.step); }
+    accessible-action-decrement => { root.request-value(root.value - root.step); }
+
+    // Validate the UI range; the typed Rust boundary validates again before native calls.
+    function request-value(v: float) {
+        if root.enabled { root.preview = clamp(v, root.minimum, root.maximum); root.changed(root.preview); }
+    }
+    changed group-active => { if root.group-active { focus.focus(); } }
+    changed enabled => {
+        if !root.enabled { root.dial-click = false; root.left-drag = false; root.drag-ended(); }
+    }
+    Timer {
+        interval: 1s;
+        running: root.rotary && root.left-drag && root.dial-click;
+        triggered => { root.dial-click = false; }
+    }
+    // Match the face's clockwise 270-degree arc; the bottom gap clamps to its nearest end.
+    function click-dial() {
+        let dx = (touch.mouse-x - root.width / 2) / 1px;
+        let dy = (touch.mouse-y - root.height / 2) / 1px;
+        let radius = min(root.width, root.height) / 2px;
+        let distance = dx * dx + dy * dy;
+        // The center has no meaningful angle; rectangular corners are outside the dial.
+        if distance < 4 || distance > radius * radius { return; }
+        let angle = atan2(dy, dx) / 1deg;
+        let unwrapped = angle > 90 ? angle - 360 : angle;
+        let fraction = clamp((unwrapped + 225) / 270, 0, 1);
+        root.glide-requested(root.minimum + fraction * (root.maximum - root.minimum));
+    }
+    // Convert pointer coordinates to a value without moving the confirmed playback clock.
+    function drag-value() {
+        if !root.enabled { return; }
+        if root.rotary {
+            // Right and up increase gain; both axes share the same sensitivity and capture origin.
+            let horizontal = touch.mouse-x - root.drag-origin-x;
+            let vertical = root.drag-origin-y - touch.mouse-y;
+            if !root.dial-moved {
+                if horizontal * horizontal + vertical * vertical <= 16px * 1px { return; }
+                root.dial-moved = true;
+                root.dial-click = false;
+            }
+            let change = (horizontal + vertical) / 140px * (root.maximum - root.minimum);
+            root.request-value(root.drag-origin-value + change);
+            return;
+        }
+        let fraction = root.vertical ? 1 - clamp((touch.mouse-y - 8px) / max(1px, root.height - 16px), 0, 1) : clamp((touch.mouse-x - 8px) / max(1px, root.width - 16px), 0, 1);
+        let value = root.minimum + fraction * (root.maximum - root.minimum);
+        if root.grouped-drag {
+            root.drag-position(touch.mouse-x, touch.mouse-y, value);
+        } else {
+            root.request-value(value);
+        }
+    }
+    if root.rotary: DialFace {
+        fraction: root.fraction; spectrum: root.spectrum; focused: focus.has-focus;
+    }
+    if !root.rotary: LinearSliderFace {
+        vertical: root.vertical; focused: focus.has-focus;
+        spectrum: root.spectrum;
+        fraction: root.fraction; accent: root.accent; fill-track: root.fill-track;
+        skipped-start: root.skipped-start; skipped-end: root.skipped-end;
+        mix-start: root.mix-start; mix-end: root.mix-end;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        pointer-event(event) => {
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                root.left-drag = true;
+                root.dial-click = root.rotary;
+                root.dial-moved = false;
+                root.drag-origin-value = root.value;
+                root.drag-origin-x = touch.mouse-x;
+                root.drag-origin-y = touch.mouse-y;
+                focus.focus();
+                root.drag-started();
+                root.drag-value();
+            }
+            // A short stationary release requests an angle; holds, drags and cancellation cannot.
+            if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) || event.kind == PointerEventKind.cancel {
+                if root.enabled && root.left-drag && root.dial-click && event.kind == PointerEventKind.up {
+                    root.click-dial();
+                }
+                root.dial-click = false;
+                root.left-drag = false;
+                root.drag-ended();
+            }
+        }
+        moved => { if root.left-drag { root.drag-value(); } }
+        double-clicked => {
+            if !root.rotary || root.left-drag {
+                root.dial-click = false;
+                root.request-value(root.default-value);
+            }
+        }
+    }
+    focus := FocusScope {
+        width: 0px;
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.RightArrow || event.text == Key.UpArrow { root.request-value(root.value + root.step); return accept; }
+            if event.text == Key.LeftArrow || event.text == Key.DownArrow { root.request-value(root.value - root.step); return accept; }
+            if event.text == Key.Home { root.request-value(root.minimum); return accept; }
+            if event.text == Key.End { root.request-value(root.maximum); return accept; }
+            return reject;
+        }
+    }
+}
+
+// Shared reference-styled face; the toolkit owns popup, keyboard and accessible selection.
+export component Choice inherits Rectangle {
+    in property <bool> compact: false;
+    in property <string> label;
+    min-width: 120px;
+    in property <[string]> values;
+    in property <bool> enabled: true;
+    in-out property <int> selected: 0;
+    callback chosen(int);
+    min-height: root.compact ? 28px : 36px;
+    forward-focus: selector;
+    selector := ComboBox {
+        width: parent.width; height: parent.height;
+        accessible-label: root.label;
+        model: root.values;
+        current-index <=> root.selected;
+        enabled: root.enabled;
+        selected(value) => { root.chosen(self.current-index); }
+    }
+    // This passive face covers toolkit chrome without intercepting its input or popup.
+    Rectangle {
+        accessible-role: none;
+        background: Theme.choice-face;
+        border-width: 1px; border-color: Theme.edge; border-radius: 5px;
+        Rectangle {
+            x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px;
+            background: transparent; border-width: 1px; border-color: #0b0e0f;
+            border-radius: 4px;
+        }
+        Text {
+            x: 12px; width: parent.width - 44px; height: parent.height;
+            text: selector.current-value; color: Theme.text; font-size: 13px;
+            opacity: root.enabled ? 1 : 0.4;
+            vertical-alignment: center; overflow: elide; accessible-role: none;
+        }
+        Icon {
+            x: parent.width - 28px; y: (parent.height - self.height) / 2;
+            width: 16px; height: 16px; source: @image-url("../assets/chevron-down.svg");
+            opacity: root.enabled ? 1 : 0.4;
+        }
+    }
+}

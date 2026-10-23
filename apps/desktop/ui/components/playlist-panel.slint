@@ -1,0 +1,125 @@
+import { Theme } from "theme.slint";
+import { TextField } from "text-field.slint";
+import { ActionButton } from "controls.slint";
+import { ReadoutSurface } from "instruments.slint";
+import { QueueView, TrackRow, AnalysisRow } from "queue-view.slint";
+export { TrackRow, AnalysisRow }
+
+// One queue view for both window hosts; callbacks carry stable occurrence IDs.
+export component PlaylistPanel inherits Rectangle {
+    // Keep the footer's material shading without a second raised rim around the queue.
+    background: @linear-gradient(180deg, #00000000 0%, #00000000 70%, #00000030 100%);
+    border-radius: 6px;
+    in property <[TrackRow]> tracks;
+    in property <[AnalysisRow]> analysis-states;
+    in property <bool> analysis-busy;
+    in property <string> analysis-summary;
+    pure callback analysis-state([AnalysisRow], string) -> int;
+    callback analyze-track(string);
+    callback analyze-all();
+    callback cancel-analysis();
+    in property <int> total-tracks;
+    in property <string> total-duration;
+    in-out property <string> search-query;
+    in-out property <bool> search-open;
+    pure callback limit-query(string) -> string;
+    // Closing search restores the full list without dispatching a playback command.
+    function close-search() { root.search-query = ""; root.search-open = false; queue.focus(); }
+    in property <int> current: -1;
+    in property <bool> picking;
+    in property <bool> closing;
+    in property <bool> playing;
+    in property <bool> motion-enabled: true;
+    in property <bool> spectrum;
+    in-out property <string> selected-id;
+    in-out property <length> scroll: 0px;
+    callback open-files();
+    pure callback locate-track(string) -> int;
+    callback select-track(string);
+    callback remove-track(string);
+    callback move-track(string, bool);
+    callback reorder-track(string, string, bool);
+    // Forward explicit reveal/cancel to the single gesture owner.
+    public function reveal-current() { queue.reveal-current(); }
+    // Discard pending row gestures when the host hides or loses focus.
+    public function cancel() { queue.cancel(); }
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 8px;
+
+        Rectangle {
+            ReadoutSurface { }
+            if root.tracks.length == 0: Text {
+                text: root.total-tracks == 0 ? @tr("Open files to add music to your library.") : @tr("No matching tracks");
+                color: Theme.muted; font-size: 12px; wrap: word-wrap;
+                vertical-alignment: center; horizontal-alignment: center;
+            }
+            queue := QueueView {
+                x: 3px; y: 3px; width: parent.width - 6px; height: parent.height - 6px;
+                locate-track(id) => { root.locate-track(id) }
+                analysis-states: root.analysis-states;
+                analysis-state(states, id) => { root.analysis-state(states, id) }
+                analyze(id) => { root.analyze-track(id); }
+                tracks: root.tracks; current: root.current; playing: root.playing;
+                motion-enabled: root.motion-enabled; spectrum: root.spectrum; enabled: !root.closing;
+                scroll <=> root.scroll; selected-id <=> root.selected-id;
+                play(id) => { root.select-track(id); }
+                remove(id) => { root.remove-track(id); }
+                reorder(id, target, after) => { root.reorder-track(id, target, after); }
+            }
+        }
+        if root.search-open: HorizontalLayout {
+            height: 32px; spacing: 6px;
+            search-editor := TextField {
+                text <=> root.search-query; label: @tr("Search library");
+                placeholder: @tr("Artist, title, album, year, disc…"); autofocus: true;
+                enabled: !root.closing;
+                edited(query) => { root.search-query = root.limit-query(query); }
+                dismissed => { root.close-search(); }
+            }
+            ActionButton {
+                width: 28px; compact: true; label: @tr("Clear search");
+                icon: @image-url("../assets/x.svg"); enabled: !root.closing;
+                clicked => { root.search-query = ""; search-editor.focus-input(); }
+            }
+        }
+        HorizontalLayout {
+            height: 28px; spacing: 8px;
+            ActionButton {
+                width: 116px; compact: true;
+                caption: root.analysis-busy ? @tr("Cancel analysis") : @tr("Analyze all");
+                label: root.analysis-busy ? @tr("Cancel library analysis") : @tr("Analyze all library tracks");
+                icon: root.analysis-busy ? @image-url("../assets/x.svg") : @image-url("../assets/analysis.svg");
+                enabled: !root.closing && root.total-tracks > 0;
+                clicked => { if root.analysis-busy { root.cancel-analysis(); } else { root.analyze-all(); } }
+            }
+            Text {
+                text: root.analysis-summary; color: Theme.muted; font-size: 11px;
+                vertical-alignment: center; horizontal-alignment: right; overflow: elide;
+                accessible-live-region: polite;
+            }
+        }
+        Rectangle {
+            height: 28px;
+            open-button := ActionButton {
+                x: 0px; height: parent.height;
+                width: root.width < 360px ? 28px : 78px; compact: true;
+                label: @tr("Open files"); caption: root.width < 360px ? "" : @tr("Open");
+                icon: @image-url("../assets/folder-open.svg");
+                enabled: !root.picking && !root.closing;
+                clicked => { root.open-files(); }
+            }
+            search-button := ActionButton {
+                x: open-button.width + 8px; height: parent.height;
+                width: root.width < 360px ? 28px : 78px; compact: true; label: @tr("Toggle library search"); caption: root.width < 360px ? "" : @tr("Search");
+                icon: @image-url("../assets/search.svg"); active: root.search-open;
+                enabled: !root.closing;
+                clicked => {
+                    if root.search-open { root.close-search(); } else { root.search-open = true; }
+                }
+            }
+            Text { x: search-button.x + search-button.width + 8px; width: max(0px, parent.width - self.x); height: parent.height; horizontal-alignment: right; overflow: elide; text: (root.search-query == "" ? root.total-tracks : root.tracks.length + " / " + root.total-tracks) + @tr(" tracks") + " · " + root.total-duration; color: Theme.muted; font-size: 11px; vertical-alignment: center; }
+        }
+    }
+}

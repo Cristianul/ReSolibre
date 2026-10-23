@@ -1,0 +1,12 @@
+// One bundled, untinted brand asset for native icons and shared window headers.
+export global Branding {
+    out property <image> logo: @image-url("../assets/resolibre.png");
+    out property <string> app-id: "resolibre";
+}
+
+export component BrandLogo inherits Image {
+    source: Branding.logo;
+    image-fit: contain;
+    width: 24px;
+    height: 24px;
+}

@@ -1,0 +1,129 @@
+import { Theme } from "theme.slint";
+import { ActionButton, ControlSlider, Choice } from "controls.slint";
+
+export struct EqBand { label: string, gain: float, available: bool }
+
+// Printed scale aligned to the shared fader's travel; preamp uses its real independent limits.
+component GainScale inherits Rectangle {
+    in property <float> maximum;
+    in property <float> minimum;
+    width: 26px;
+    for index in 3: Text {
+        y: 6px + index * (parent.height - 26px) / 2;
+        width: parent.width; height: 14px;
+        text: index == 0 ? "+" + root.maximum : index == 1 ? "0" : "−" + abs(root.minimum);
+        color: index == 1 ? Theme.text : Theme.muted;
+        font-size: 10px; horizontal-alignment: right; vertical-alignment: center;
+    }
+}
+
+// A reusable view only: session owns gains, adapters own DSP and preset storage.
+export component EqualizerPanel inherits Rectangle {
+    in property <[EqBand]> bands;
+    in property <bool> spectrum: false;
+    in property <bool> eq-enabled: false;
+    in property <float> preamp: 0;
+    in property <float> preamp-minimum;
+    in property <float> preamp-maximum;
+    in property <bool> enabled: true;
+    in property <bool> store-busy: true;
+    in property <[string]> presets;
+    callback change-band(int, float);
+    callback change-preamp(float);
+    callback set-enabled(bool);
+    callback load-preset(int);
+    callback save-preset();
+    in-out property <int> preset-index;
+    in property <string> notice;
+    private property <int> active-band: -1;
+    private property <float> drag-gain: 0;
+
+    // Only the band under the pointer receives edits; gaps, labels and preamp are excluded.
+    function drag-band(x: length, y: length, height: length, gain: float) {
+        root.active-band = -1;
+        if !root.enabled || root.bands.length == 0 || y < 0px || y > height || x < 0px { return; }
+        let stride = (band-row.width + band-row.spacing) / root.bands.length;
+        let index = floor(x / stride);
+        if index >= root.bands.length || x - index * stride > stride - band-row.spacing { return; }
+        if !root.bands[index].available { return; }
+        root.drag-gain = gain;
+        root.active-band = index;
+        root.change-band(index, gain);
+    }
+    background: Theme.eq-faceplate;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: #080b0c;
+    Rectangle {
+        x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px;
+        border-radius: 4px; border-width: 1px; border-color: #ffffff08;
+        background: transparent;
+    }
+    VerticalLayout {
+        padding: 10px;
+        spacing: 6px;
+        HorizontalLayout {
+            height: 30px; spacing: 8px;
+            ActionButton { compact: true; switch-style: true; signal: root.spectrum ? Theme.band-color(0, true) : Theme.accent; width: 76px; show-icon: false; label: root.eq-enabled ? "Bypass EQ" : "Enable EQ"; caption: root.eq-enabled ? "On" : "Off"; active: root.eq-enabled; enabled: root.enabled; clicked => { root.set-enabled(!root.eq-enabled); } }
+            Text { text: root.notice; color: Theme.muted; font-size: 11px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+            Choice { compact: true; width: 180px; label: "Load EQ preset"; values: root.presets; selected <=> root.preset-index; enabled: root.enabled && !root.store-busy; chosen(index) => { root.load-preset(index); } }
+            ActionButton { compact: true; width: 30px; label: "Save EQ preset"; icon: @image-url("../assets/save.svg"); enabled: root.enabled && !root.store-busy; clicked => { root.save-preset(); } }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout {
+                width: 26px; spacing: 4px;
+                GainScale { maximum: 12; minimum: -12; vertical-stretch: 1; }
+                Text { height: 20px; text: "dB"; color: Theme.muted; font-size: 10px; horizontal-alignment: right; }
+            }
+            band-row := HorizontalLayout {
+                spacing: 6px;
+                horizontal-stretch: 10;
+                for band[index] in root.bands: VerticalLayout {
+                    // Equal widths retain captured drag coordinates across the entire bank.
+                    min-width: 28px; preferred-width: 28px; horizontal-stretch: 1;
+                    spacing: 4px;
+                    fader := ControlSlider {
+                        accent: Theme.band-color(index, root.spectrum); spectrum: root.spectrum;
+                        vertical: true; fill-track: true; label: "EQ " + band.label;
+                        minimum: -12; maximum: 12; step: 0.5; value: band.gain;
+                        enabled: root.enabled && band.available;
+                        grouped-drag: true;
+                        group-active: root.active-band == index;
+                        group-value: root.drag-gain;
+                        drag-position(x, y, gain) => { root.drag-band(index * (self.width + band-row.spacing) + x, y, self.height, gain); }
+                        drag-ended => { root.active-band = -1; }
+                        changed(value) => { root.change-band(index, value); }
+                    }
+                    Text {
+                        height: 20px;
+                        text: fader.interacting ? round(fader.displayed-value * 10) / 10 + " dB" : band.label;
+                        color: !band.available ? Theme.edge : fader.interacting ? Theme.band-color(index, root.spectrum) : Theme.text;
+                        horizontal-alignment: center; vertical-alignment: center; font-size: 11px;
+                    }
+                }
+            }
+            Rectangle { width: 1px; background: #525958; }
+            VerticalLayout {
+                width: 26px; spacing: 4px;
+                GainScale { maximum: root.preamp-maximum; minimum: root.preamp-minimum; vertical-stretch: 1; }
+                Rectangle { height: 20px; }
+            }
+            VerticalLayout {
+                min-width: 48px; preferred-width: 48px; horizontal-stretch: 1;
+                spacing: 4px;
+                preamp-fader := ControlSlider {
+                    accent: root.spectrum ? Theme.band-color(9, true) : Theme.accent;
+                    vertical: true; fill-track: false; label: "EQ preamp";
+                    minimum: root.preamp-minimum; maximum: root.preamp-maximum; step: 0.5; value: root.preamp;
+                    enabled: root.enabled; changed(value) => { root.change-preamp(value); }
+                }
+                Text {
+                    height: 20px;
+                    text: preamp-fader.interacting ? round(preamp-fader.displayed-value * 10) / 10 + " dB" : "Preamp";
+                    color: Theme.text; horizontal-alignment: center; vertical-alignment: center; font-size: 11px;
+                }
+            }
+        }
+    }
+}

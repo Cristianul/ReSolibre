@@ -1,0 +1,126 @@
+import { ImportMenu } from "components/import-menu.slint";
+import { Branding } from "components/branding.slint";
+import { WindowSurface } from "components/window-header.slint";
+import { Theme } from "components/theme.slint";
+import { PlaylistPanel, TrackRow, AnalysisRow } from "components/playlist-panel.slint";
+
+// Separate OS window; it contains no player/session state of its own.
+export component PlaylistWindow inherits Window {
+    title: "ReSolibre · Library";
+    icon: Branding.logo;
+    no-frame: true;
+    resize-border-width: 6px;
+    out property <length> initial-width: 420px;
+    out property <length> initial-height: 516px;
+    preferred-width: root.initial-width;
+    preferred-height: root.initial-height;
+    min-width: 320px;
+    min-height: 244px;
+    background: transparent;
+    default-font-family: "Sans Serif";
+    default-font-size: 14px;
+    in property <[TrackRow]> tracks;
+    in property <[AnalysisRow]> analysis-states;
+    in property <bool> analysis-busy;
+    in property <string> analysis-summary;
+    pure callback analysis-state([AnalysisRow], string) -> int;
+    callback analyze-track(string);
+    callback analyze-all();
+    callback cancel-analysis();
+    in property <string> total-duration: "00:00";
+    in property <int> current: -1;
+    in-out property <string> search-query;
+    in-out property <bool> search-open;
+    out property <[TrackRow]> visible-tracks: root.filter-tracks(root.tracks, root.search-query);
+    out property <int> visible-current: root.current >= 0 && root.current < root.tracks.length
+        ? root.find-track(root.visible-tracks, root.tracks[root.current].id) : -1;
+    pure callback filter-tracks([TrackRow], string) -> [TrackRow];
+    pure callback find-track([TrackRow], string) -> int;
+    pure callback limit-query(string) -> string;
+    private property <bool> reveal-after-search;
+    changed search-query => {
+        panel.cancel();
+        // Property notifications run after the explicit title action; keep its requested scroll.
+        if root.reveal-after-search {
+            root.reveal-after-search = false;
+            panel.reveal-current();
+        } else { root.playlist-scroll = 0px; }
+    }
+    in property <bool> playing;
+    in property <bool> motion-enabled: true;
+    in property <bool> spectrum;
+    in-out property <string> selected-id;
+    // The shared view owns selection, scrolling and gesture cancellation.
+    public function reveal-current() {
+        if root.search-query != "" {
+            root.reveal-after-search = true;
+            root.search-query = "";
+        }
+        panel.reveal-current();
+    }
+    // Cancel a view gesture without issuing a queue mutation.
+    public function cancel-interaction() { panel.cancel(); }
+    in property <bool> picking;
+    in property <bool> closing;
+    in property <string> error-message;
+    in-out property <length> playlist-scroll: 0px;
+    in property <bool> drop-menu;
+    in property <bool> drop-playlist;
+    in property <float> drop-x: 24;
+    in property <float> drop-y: 48;
+    in property <string> import-status;
+    callback drop-choice(int);
+    callback open-files();
+
+    callback select-track(string);
+    callback remove-track(string);
+    callback move-track(string, bool);
+    callback reorder-track(string, string, bool);
+
+    WindowSurface { }
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        if root.error-message != "" || root.import-status != "": Text {
+            text: root.error-message != "" ? root.error-message : root.import-status;
+            color: root.error-message != "" ? Theme.error : Theme.muted;
+            overflow: elide; accessible-live-region: polite;
+        }
+        Rectangle {
+            panel := PlaylistPanel {
+                locate-track(id) => { root.find-track(root.visible-tracks, id) }
+                analysis-states: root.analysis-states;
+                analysis-busy: root.analysis-busy; analysis-summary: root.analysis-summary;
+                analysis-state(states, id) => { root.analysis-state(states, id) }
+                analyze-track(id) => { root.analyze-track(id); }
+                analyze-all => { root.analyze-all(); }
+                cancel-analysis => { root.cancel-analysis(); }
+                tracks: root.visible-tracks; current: root.visible-current;
+                total-tracks: root.tracks.length; total-duration: root.total-duration;
+                search-query <=> root.search-query; search-open <=> root.search-open;
+                limit-query(query) => { root.limit-query(query) }
+                selected-id <=> root.selected-id; playing: root.playing;
+                motion-enabled: root.motion-enabled && !root.minimized; spectrum: root.spectrum;
+                picking: root.picking; closing: root.closing;
+                scroll <=> root.playlist-scroll;
+                open-files => { root.open-files(); }
+                select-track(id) => { root.select-track(id); }
+                remove-track(id) => { root.remove-track(id); }
+                move-track(id, forward) => { root.move-track(id, forward); }
+                reorder-track(id, target, after) => { root.reorder-track(id, target, after); }
+            }
+        }
+    }
+    // Reuse the empty top inset for native dragging, below the 6 px resize edge.
+    WindowMoveArea {
+        x: 6px; y: 6px; width: root.width - 12px; height: 14px;
+        enabled: !root.closing;
+        accessible-role: window-title-bar;
+        accessible-label: @tr("Move library");
+    }
+    ImportMenu {
+        visible: root.drop-menu;
+        anchor-x: root.drop-x; anchor-y: root.drop-y;
+        choose(choice) => { root.drop-choice(choice); }
+    }
+}

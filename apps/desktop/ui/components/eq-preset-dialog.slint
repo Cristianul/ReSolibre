@@ -1,0 +1,48 @@
+import { Theme } from "theme.slint";
+import { ActionButton } from "controls.slint";
+import { TextField } from "text-field.slint";
+import { WindowSurface } from "window-header.slint";
+
+// Embedded name editor shared by new curves and imported presets; no audio/storage policy here.
+export component EqPresetDialog inherits Rectangle {
+    in-out property <string> name;
+    in property <string> message;
+    in property <bool> busy;
+    in-out property <bool> replace-confirm;
+    callback save(string, bool);
+    callback cancel();
+    callback transfer(bool);
+    // Keep the chassis' transparent corners and drawer cutouts intact.
+    background: transparent;
+    TouchArea { }
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: min(440px, parent.width - 32px); height: 218px;
+        WindowSurface { }
+        VerticalLayout {
+            padding: 18px; spacing: 12px;
+            Text { text: @tr("Save EQ preset"); color: Theme.text; font-size: 16px; font-weight: 600; }
+            TextField {
+                height: 34px; text <=> root.name; label: @tr("Preset name");
+                placeholder: @tr("Name, e.g. Headphones"); autofocus: true; enabled: !root.busy;
+                edited(value) => { root.replace-confirm = false; }
+                accepted => { if !root.busy { root.save(root.name, false); } }
+                dismissed => { if !root.busy { root.cancel(); } }
+            }
+            Text {
+                text: root.message == "" ? @tr("Saved as a portable .resolibre-eq file. Use Export to share it.") : root.message;
+                color: Theme.muted; font-size: 12px; wrap: word-wrap; vertical-stretch: 1;
+                accessible-live-region: polite;
+            }
+            HorizontalLayout {
+                height: 30px; spacing: 8px;
+                ActionButton { compact: true; width: 72px; label: @tr("Import EQ preset"); caption: @tr("Import"); show-icon: false; enabled: !root.busy; clicked => { root.transfer(false); } }
+                ActionButton { compact: true; width: 72px; label: @tr("Export EQ preset"); caption: @tr("Export"); show-icon: false; enabled: !root.busy; clicked => { root.transfer(true); } }
+                Rectangle { horizontal-stretch: 1; }
+                ActionButton { compact: true; width: 84px; label: @tr("Cancel preset save"); caption: @tr("Cancel"); show-icon: false; enabled: !root.busy; clicked => { root.cancel(); } }
+                ActionButton { compact: true; width: 92px; label: root.replace-confirm ? @tr("Replace named preset") : @tr("Confirm preset save"); caption: root.replace-confirm ? @tr("Replace") : @tr("Save"); icon: @image-url("../assets/save.svg"); enabled: !root.busy; clicked => { root.save(root.name, root.replace-confirm); } }
+            }
+        }
+    }
+}
