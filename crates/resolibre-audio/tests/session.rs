@@ -325,9 +325,11 @@ fn supplied_music_journey() {
     };
     let session = Session::start(output).unwrap();
     session
-        .submit(Command::Equalizer(resolibre_core::equalizer::EqAction::Load(
-            resolibre_core::equalizer::Equalizer::preset(2).unwrap(),
-        )))
+        .submit(Command::Equalizer(
+            resolibre_core::equalizer::EqAction::Load(
+                resolibre_core::equalizer::Equalizer::preset(2).unwrap(),
+            ),
+        ))
         .unwrap();
     let revision = session.submit(Command::Open(files.to_vec())).unwrap();
     wait(&session, revision, |s| {
@@ -751,9 +753,9 @@ fn seek_to_eof_after_startup_advances_queue() {
     assert!(next.error.is_none());
     let curve = resolibre_core::equalizer::Equalizer::preset(2).unwrap();
     session
-        .submit(Command::Equalizer(resolibre_core::equalizer::EqAction::Load(
-            curve,
-        )))
+        .submit(Command::Equalizer(
+            resolibre_core::equalizer::EqAction::Load(curve),
+        ))
         .unwrap();
     let revision = session
         .submit(Command::Seek {
@@ -2004,9 +2006,9 @@ fn mix_starts_during_natural_playback_without_seeking() {
         ))
         .unwrap();
     session
-        .submit(Command::Queue(resolibre_core::queue::QueueAction::SetShuffle(
-            true,
-        )))
+        .submit(Command::Queue(
+            resolibre_core::queue::QueueAction::SetShuffle(true),
+        ))
         .unwrap();
     session.submit(Command::SetMix(true)).unwrap();
     session
@@ -2049,6 +2051,113 @@ fn mix_starts_during_natural_playback_without_seeking() {
     close(session);
 }
 
+/// Both cached-view and forced Analyze remain available after Stop without reopening playback.
+#[test]
+fn analysis_after_stop_keeps_the_displayed_track_stopped() {
+    use resolibre_audio::session::AnalysisStatus;
+    let fixture = Fixture::new(8);
+    let session = Session::start(AudioOutput::Silent).unwrap();
+    let revision = session
+        .submit(Command::Open(vec![fixture.path.clone()]))
+        .unwrap();
+    wait(&session, revision, |snapshot| {
+        snapshot.state == SessionState::Playing
+    });
+    let revision = session.submit(Command::Stop).unwrap();
+    let stopped = wait(&session, revision, |snapshot| {
+        snapshot.state == SessionState::Stopped
+    });
+    for force in [false, true] {
+        let command = if force {
+            Command::Analyze {
+                generation: stopped.generation,
+            }
+        } else {
+            Command::ViewAnalysis {
+                generation: stopped.generation,
+            }
+        };
+        let revision = session.submit(command).unwrap();
+        let result = wait(&session, revision, |snapshot| {
+            matches!(snapshot.analysis, AnalysisStatus::Complete(_))
+        });
+        assert_eq!(result.current, stopped.current);
+        assert_eq!(result.generation, stopped.generation);
+        assert_eq!(result.state, SessionState::Stopped);
+        assert_eq!(result.position, Some(0.0));
+        assert!(!result.seekable);
+    }
+    close(session);
+}
+
+/// Inspection keeps a distinct result for an off-track occurrence, including retries after Stop.
+#[test]
+fn library_inspection_does_not_select_or_play_its_target() {
+    use resolibre_audio::session::AnalysisStatus;
+    let current = Fixture::new(30);
+    let target = Fixture::new(2);
+    let session = Session::start(AudioOutput::Silent).unwrap();
+    let revision = session
+        .submit(Command::Open(vec![
+            current.path.clone(),
+            target.path.clone(),
+        ]))
+        .unwrap();
+    let playing = wait(&session, revision, |snapshot| {
+        snapshot.state == SessionState::Playing
+    });
+    let id = playing.tracks[1].id;
+    let revision = session
+        .submit(Command::InspectTrack { id, force: false })
+        .unwrap();
+    let inspected = wait(&session, revision, |snapshot| {
+        snapshot
+            .inspection
+            .as_ref()
+            .is_some_and(|view| view.id == id && matches!(view.status, AnalysisStatus::Complete(_)))
+    });
+    assert_eq!(inspected.current, Some(0));
+    assert_eq!(inspected.generation, playing.generation);
+    assert_eq!(inspected.state, SessionState::Playing);
+    assert!(
+        !matches!(inspected.analysis, AnalysisStatus::Complete(_)),
+        "other tracks cannot change current BPM/plot"
+    );
+    let revision = session.submit(Command::Stop).unwrap();
+    wait(&session, revision, |snapshot| {
+        snapshot.state == SessionState::Stopped
+    });
+    let revision = session
+        .submit(Command::InspectTrack { id, force: true })
+        .unwrap();
+    let retried = wait(&session, revision, |snapshot| {
+        snapshot
+            .inspection
+            .as_ref()
+            .is_some_and(|view| matches!(view.status, AnalysisStatus::Complete(_)))
+    });
+    assert_eq!(retried.current, Some(0));
+    assert_eq!(retried.state, SessionState::Stopped);
+    let revision = session
+        .submit(Command::InspectTrack {
+            id: u64::MAX,
+            force: true,
+        })
+        .unwrap();
+    let unchanged = wait(&session, revision, |_| true);
+    assert_eq!(unchanged.inspection.as_ref().unwrap().id, id);
+    let revision = session
+        .submit(Command::Queue(QueueAction::Remove(id)))
+        .unwrap();
+    wait(&session, revision, |snapshot| {
+        snapshot
+            .inspection
+            .as_ref()
+            .is_some_and(|view| matches!(view.status, AnalysisStatus::Unavailable))
+    });
+    close(session);
+}
+
 /// Analyze All after restart reuses a valid full report, while stale input still needs a new hash.
 #[test]
 fn library_batch_reuses_persistent_full_analysis_after_restart() {
@@ -2088,7 +2197,23 @@ fn library_batch_reuses_persistent_full_analysis_after_restart() {
             fixture.path.clone(),
         ]))
         .unwrap();
-    wait(&restarted, revision, |snapshot| snapshot.tracks.len() == 2);
+    let restored = wait(&restarted, revision, |snapshot| {
+        snapshot.tracks.len() == 2 && snapshot.library_analysis.len() == 2
+    });
+    assert!(
+        restored
+            .library_analysis
+            .values()
+            .all(|status| *status == LibraryAnalysisStatus::Complete)
+    );
+    assert_eq!(
+        restored.analysis_pending, 0,
+        "startup must not schedule analysis"
+    );
+    assert!(matches!(
+        restored.analysis,
+        resolibre_audio::session::AnalysisStatus::Idle
+    ));
     let revision = restarted.submit(Command::AnalyzeAll).unwrap();
     wait(&restarted, revision, |snapshot| {
         snapshot.analysis_pending == 0
@@ -2104,6 +2229,69 @@ fn library_batch_reuses_persistent_full_analysis_after_restart() {
         database.track(&identity).unwrap().unwrap().power_db,
         stored.power_db,
         "batch cache hits must not decode and overwrite valid reports"
+    );
+}
+
+/// A pre-index cache restores badges without Analyze; misses, inaccessible sources and rhythm-only data do not.
+#[test]
+fn library_restores_legacy_cached_badges_without_decoding_or_playback() {
+    use resolibre_audio::session::{AnalysisStatus, LibraryAnalysisStatus};
+    let fixture = Fixture::new(2);
+    let unanalysed = Fixture::new(3);
+    let directory = fixture.directory.join("legacy-cache");
+    let identity = resolibre_storage::audio_identity::identify(
+        fs::File::open(&fixture.path).unwrap(),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    let other_identity = resolibre_storage::audio_identity::identify(
+        fs::File::open(&unanalysed.path).unwrap(),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    let mut analyzer = resolibre_core::analysis::TrackAnalyzer::new(8000, 1).unwrap();
+    analyzer.push(&[0.0; 16000]).unwrap();
+    let mut report = analyzer.finish().unwrap();
+    report.power_db.fill(-42.0);
+    let mut database = resolibre_storage::AnalysisCache::open(&directory).unwrap();
+    database.save_track(&identity, &report).unwrap();
+    database
+        .save_rhythm(&other_identity, true, &Default::default())
+        .unwrap();
+    drop(database);
+
+    let session =
+        Session::start_with_analysis_cache(AudioOutput::Silent, Some(directory.clone())).unwrap();
+    let revision = session
+        .submit(Command::Add(vec![
+            unanalysed.path.clone(),
+            fixture.directory.join("missing.wav"),
+            fixture.path.clone(),
+            fixture.path.clone(),
+        ]))
+        .unwrap();
+    let restored = wait(&session, revision, |snapshot| {
+        snapshot.library_analysis.len() == 2
+    });
+    assert!(
+        restored
+            .library_analysis
+            .values()
+            .all(|status| *status == LibraryAnalysisStatus::Complete)
+    );
+    assert!(
+        restored.tracks[..2]
+            .iter()
+            .all(|track| !restored.library_analysis.contains_key(&track.id))
+    );
+    assert_eq!(restored.analysis_pending, 0);
+    assert!(matches!(restored.analysis, AnalysisStatus::Idle));
+    assert_eq!(restored.state, SessionState::Idle);
+    close(session);
+    let database = resolibre_storage::AnalysisCache::open(&directory).unwrap();
+    assert_eq!(
+        database.track(&identity).unwrap().unwrap().power_db,
+        report.power_db
     );
 }
 

@@ -5,6 +5,7 @@ mod files;
 pub mod metadata;
 #[cfg(test)]
 mod tests;
+mod track_sources;
 mod validation;
 
 use audio_identity::AudioIdentity;
@@ -94,7 +95,9 @@ impl AnalysisCache {
         } else if version != SCHEMA {
             return Err(CacheError);
         }
-        Ok(Self { connection })
+        let database = Self { connection };
+        database.prepare_track_sources()?;
+        Ok(database)
     }
 
     /// Returns a validated prefix or complete timeline; complete coverage can satisfy a prefix request.

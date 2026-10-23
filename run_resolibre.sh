@@ -1,1 +1,0 @@
-LD_LIBRARY_PATH="$PWD/.local/native/usr/lib64" ./target/debug/resolibre-desktop

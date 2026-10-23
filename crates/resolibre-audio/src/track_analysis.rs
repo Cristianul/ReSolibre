@@ -67,6 +67,16 @@ impl TrackJob {
                     key,
                     &worker_cancel,
                 );
+                if let Some(cached) = &mut cached
+                    && crate::analysis_cache::unchanged(&file, key, &worker_cancel)
+                    && cached
+                        .database
+                        .save_track_source(&key.metadata_key(), &cached.identity)
+                        .is_err()
+                    && let Some(config) = &cache_config
+                {
+                    config.warn();
+                }
                 if !force && let Some(cached) = &cached {
                     match cached.database.track(&cached.identity) {
                         Ok(Some(report)) => {

@@ -41,6 +41,13 @@ hashing runs on the UI, transport owner or audio callback. Default library/test
 sessions have no cache; desktop explicitly supplies a profile location. Future
 remote sources must supply a separately scoped storage/access adapter.
 
+Library badge restoration uses an additive `track_sources_v1` index (at most 4,096
+file-fact/audio-hash pairs). This is a presentation hint only: analysis/playback reuse
+still hashes the original audio. The background status worker checks read access,
+regular-file identity and full-report validity; absent hints are populated by bounded
+hashing, including older cache entries, without decoding. Index hits do not refresh or
+overwrite descriptive tags. Missing/corrupt/evicted full reports never restore a badge.
+
 Hashing has a two-second cooperative deadline, 512 MiB input/read budget,
 16 MiB per probe/packet read phase and no whole-file buffer. Malformed/unsupported or multi-audio-stream containers bypass
 persistence and retain ordinary native analysis. Native and portable stream IDs
@@ -74,6 +81,7 @@ Deleting the dedicated analysis directory while closed also rebuilds the cache.
 - `crates/resolibre-audio/src/analysis_cache.rs`: retained-file checks and redacted fallback.
 - `rhythm_analysis.rs`, `track_analysis.rs` in that crate: worker-only load/save.
 - `session/analysis.rs`, `session/rhythm.rs`: explicit profile configuration.
+- `track_sources.rs` in storage and `analysis_cache/status.rs` in audio: startup badge hints/worker.
 - `apps/desktop/src/main.rs`: current-profile composition.
 
 ## Tests

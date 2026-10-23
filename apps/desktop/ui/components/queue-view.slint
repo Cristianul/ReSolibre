@@ -13,6 +13,7 @@ export component QueueView inherits FocusScope {
     in property <[AnalysisRow]> analysis-states;
     pure callback analysis-state([AnalysisRow], string) -> int;
     callback analyze(string);
+    callback view-analysis(string);
     in property <int> current: -1;
     in property <bool> playing;
     in property <bool> motion-enabled: true;
@@ -24,6 +25,7 @@ export component QueueView inherits FocusScope {
     callback remove(string);
     callback reorder(string, string, bool);
     private property <string> pressed-id;
+    private property <string> pressed-analysis;
     private property <bool> dragging;
     private property <bool> suppress-double;
     private property <int> insertion: -1;
@@ -40,9 +42,19 @@ export component QueueView inherits FocusScope {
     pure function row-at(y: length) -> int {
         return floor((y - root.scroll) / Theme.queue-row-height);
     }
+    // The gesture overlay uses the delegate's shared badge geometry and current stable identity.
+    pure function analysis-at(x: length, y: length) -> string {
+        let index = root.row-at(y);
+        let left = list.content-width - Theme.queue-analysis-inset;
+        if y < 0px || y >= root.height || index < 0 || index >= root.tracks.length
+            || x < left || x >= left + Theme.queue-analysis-width { return ""; }
+        let id = root.tracks[index].id;
+        return root.analysis-state(root.analysis-states, id) != 0 ? id : "";
+    }
     // Cancel pending UI work without submitting edits or changing audio.
     public function cancel() {
         root.pressed-id = ""; root.dragging = false; root.insertion = -1;
+        root.pressed-analysis = "";
         root.menu-id = ""; root.suppress-double = true;
     }
     // Reveal the current occurrence only on explicit request, preserving normal browsing scroll.
@@ -88,7 +100,7 @@ export component QueueView inherits FocusScope {
         root.cancel();
         if root.index-of(root.selected-id) < 0 { root.selected-id = ""; }
     }
-    focus-lost(reason) => { root.pressed-id = ""; root.dragging = false; root.insertion = -1; root.suppress-double = true; }
+    focus-lost(reason) => { root.pressed-id = ""; root.pressed-analysis = ""; root.dragging = false; root.insertion = -1; root.suppress-double = true; }
     key-pressed(event) => {
         if event.text == Key.Escape { root.cancel(); root.focus(); return accept; }
         if event.text == Key.Return && root.index-of(root.selected-id) >= 0 {
@@ -108,7 +120,7 @@ export component QueueView inherits FocusScope {
         }
         return reject;
     }
-    ListView {
+    list := ListView {
         content-y <=> root.scroll;
         for track[index] in root.tracks: QueueRow {
             analysis-status: root.analysis-state(root.analysis-states, track.id);
@@ -119,6 +131,7 @@ export component QueueView inherits FocusScope {
             in-view: self.y + root.scroll + self.height > 0px && self.y + root.scroll < root.height;
             enabled: root.enabled;
             select => { root.selected-id = track.id; root.focus(); }
+            view-analysis => { root.view-analysis(track.id); }
         }
     }
     touch := TouchArea {
@@ -129,7 +142,10 @@ export component QueueView inherits FocusScope {
             if event.kind == PointerEventKind.down {
                 root.cancel(); root.focus();
                 let index = root.row-at(self.mouse-y);
-                if index >= 0 && index < root.tracks.length {
+                let analysis-id = root.analysis-at(self.mouse-x, self.mouse-y);
+                if event.button == PointerEventButton.left && analysis-id != "" {
+                    root.pressed-analysis = analysis-id; root.press-y = self.mouse-y;
+                } else if index >= 0 && index < root.tracks.length {
                     root.selected-id = root.tracks[index].id;
                     if event.button == PointerEventButton.left {
                         root.pressed-id = root.selected-id; root.press-y = self.mouse-y;
@@ -141,9 +157,19 @@ export component QueueView inherits FocusScope {
                     }
                 }
             }
-            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.finish-drag(); }
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                let id = root.pressed-analysis;
+                root.pressed-analysis = "";
+                if id != "" {
+                    if root.analysis-at(self.mouse-x, self.mouse-y) == id { root.view-analysis(id); }
+                } else { root.finish-drag(); }
+            }
         }
         moved => {
+            if root.pressed-analysis != "" && (abs(self.mouse-y - root.press-y) > 6px
+                || root.analysis-at(self.mouse-x, self.mouse-y) != root.pressed-analysis) {
+                root.pressed-analysis = "";
+            }
             if root.pressed-id != "" && abs(self.mouse-y - root.press-y) > 6px {
                 root.dragging = true; root.suppress-double = true;
             }
@@ -152,7 +178,7 @@ export component QueueView inherits FocusScope {
         double-clicked => {
             if !root.suppress-double && root.index-of(root.selected-id) >= 0 { root.play(root.selected-id); }
         }
-        scroll-event(event) => { root.scroll-by(event.delta-y); return accept; }
+        scroll-event(event) => { root.pressed-analysis = ""; root.scroll-by(event.delta-y); return accept; }
     }
     Timer {
         interval: 32ms;

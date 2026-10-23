@@ -21,7 +21,14 @@ pub enum AnalysisStatus {
     Unavailable,
 }
 
-/// Latest full-analysis attempt in this library session; BPM uncertainty is not a failed analysis.
+/// One explicitly inspected library occurrence, independent of the current playback generation.
+#[derive(Clone, Debug)]
+pub struct AnalysisInspection {
+    pub id: u64,
+    pub status: AnalysisStatus,
+}
+
+/// Restored full result or latest session attempt; BPM uncertainty is not a failed analysis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LibraryAnalysisStatus {
     Queued,
@@ -51,6 +58,9 @@ pub(super) struct AnalysisRuntime {
     pending: VecDeque<Request>,
     completed: Option<u64>,
     queue_revision: Option<u64>,
+    cache_status: Option<crate::analysis_cache::status::StatusJob>,
+    cache_checked: std::collections::HashSet<u64>,
+    requested: std::collections::HashSet<u64>,
 }
 
 impl AnalysisRuntime {
@@ -120,12 +130,13 @@ impl AnalysisRuntime {
 
     /// Navigation releases the decoder for rhythm preparation, then resumes library work.
     pub(super) fn reset(&mut self, snapshot: &mut Snapshot) {
+        let inspected = snapshot.inspection.as_ref().map(|view| view.id);
         if let Some(active) = &mut self.active
             && !active.cancelled
         {
             active.job.cancel();
             active.cancelled = true;
-            if !active.request.foreground {
+            if !active.request.foreground || inspected == Some(active.request.id) {
                 self.pending.push_front(active.request);
                 mark(snapshot, active.request.id, LibraryAnalysisStatus::Queued);
             } else {
@@ -133,10 +144,10 @@ impl AnalysisRuntime {
             }
         }
         self.pending.retain(|request| {
-            if request.foreground {
+            if request.foreground && inspected != Some(request.id) {
                 Arc::make_mut(&mut snapshot.library_analysis).remove(&request.id);
             }
-            !request.foreground
+            !request.foreground || inspected == Some(request.id)
         });
         snapshot.analysis = AnalysisStatus::Idle;
     }
@@ -157,6 +168,7 @@ impl AnalysisRuntime {
         if !matches!(snapshot.analysis, AnalysisStatus::Complete(_)) {
             snapshot.analysis = AnalysisStatus::Cancelled;
         }
+        cancel_inspection(snapshot);
     }
 
     /// Closing the diagnostics view cancels only its explicit request, leaving a library batch running.
@@ -177,6 +189,7 @@ impl AnalysisRuntime {
         if !matches!(snapshot.analysis, AnalysisStatus::Complete(_)) {
             snapshot.analysis = AnalysisStatus::Cancelled;
         }
+        cancel_inspection(snapshot);
     }
 
     /// Promotes a current-track request; explicit Analyze replaces even a completed stored report.
@@ -184,6 +197,14 @@ impl AnalysisRuntime {
         let Some(id) = queue.current_id() else {
             return;
         };
+        if snapshot
+            .inspection
+            .as_ref()
+            .is_some_and(|view| view.id != id)
+        {
+            self.cancel_view(snapshot);
+        }
+        snapshot.inspection = None;
         if !force && matches!(snapshot.analysis, AnalysisStatus::Complete(_)) {
             return;
         }
@@ -191,6 +212,45 @@ impl AnalysisRuntime {
         snapshot.analysis = AnalysisStatus::Running {
             decoded_seconds: 0.0,
         };
+    }
+
+    /// Opens a concrete library result without selecting or playing it; explicit retries bypass the cache.
+    pub(super) fn inspect(
+        &mut self,
+        queue: &Queue<PathBuf>,
+        snapshot: &mut Snapshot,
+        id: u64,
+        force: bool,
+    ) {
+        if queue.index_of(id).is_none() {
+            return;
+        }
+        if !force
+            && snapshot.inspection.as_ref().is_some_and(|view| {
+                view.id == id && matches!(view.status, AnalysisStatus::Complete(_))
+            })
+        {
+            return;
+        }
+        let same_target = match &snapshot.inspection {
+            Some(view) => view.id == id,
+            None => queue.current_id() == Some(id),
+        };
+        if !same_target {
+            self.cancel_view(snapshot);
+        }
+        let status = if !force
+            && queue.current_id() == Some(id)
+            && matches!(snapshot.analysis, AnalysisStatus::Complete(_))
+        {
+            snapshot.analysis.clone()
+        } else {
+            self.enqueue(id, true, force, snapshot);
+            AnalysisStatus::Running {
+                decoded_seconds: 0.0,
+            }
+        };
+        snapshot.inspection = Some(AnalysisInspection { id, status });
     }
 
     /// Captures one existing occurrence, independent of the current playback selection.
@@ -214,6 +274,8 @@ impl AnalysisRuntime {
 
     /// Coalesces repeated clicks; stable IDs bound pending work to the library's maximum size.
     fn enqueue(&mut self, id: u64, foreground: bool, force: bool, snapshot: &mut Snapshot) {
+        self.requested.insert(id);
+        let mut force = force;
         if let Some(active) = &mut self.active
             && active.request.id == id
             && !active.cancelled
@@ -229,7 +291,10 @@ impl AnalysisRuntime {
             if !foreground {
                 return;
             }
-            self.pending.remove(index);
+            if let Some(previous) = self.pending.remove(index) {
+                // Opening the same badge must not downgrade an explicit fresh retry to a cache read.
+                force |= previous.force;
+            }
         }
         let request = Request {
             id,
@@ -253,6 +318,7 @@ impl AnalysisRuntime {
         available: bool,
     ) {
         self.reconcile_queue(queue, snapshot);
+        self.restore_cached(queue, snapshot);
         let was_active = self.active.is_some();
         self.poll(snapshot);
         // Leave one scheduling turn between files for current/next rhythm and playback changes.
@@ -272,8 +338,15 @@ impl AnalysisRuntime {
         let ids: std::collections::BTreeSet<_> =
             queue.entries().iter().map(|entry| entry.id).collect();
         self.pending.retain(|request| ids.contains(&request.id));
+        self.cache_checked.retain(|id| ids.contains(id));
+        self.requested.retain(|id| ids.contains(id));
         if snapshot.library_analysis.keys().any(|id| !ids.contains(id)) {
             Arc::make_mut(&mut snapshot.library_analysis).retain(|id, _| ids.contains(id));
+        }
+        if let Some(view) = &mut snapshot.inspection
+            && !ids.contains(&view.id)
+        {
+            view.status = AnalysisStatus::Unavailable;
         }
         if let Some(active) = &mut self.active
             && !ids.contains(&active.request.id)
@@ -283,17 +356,59 @@ impl AnalysisRuntime {
         }
     }
 
-    /// Publishes only the selected generation's plot; other jobs retain just a small row status in memory.
+    /// Restores cached badges independently of decoding; fresh attempts and removed IDs always win.
+    fn restore_cached(&mut self, queue: &Queue<PathBuf>, snapshot: &mut Snapshot) {
+        if let Some(job) = &mut self.cache_status {
+            let restored = job.poll();
+            if job.finished() {
+                self.cache_status = None;
+            }
+            self.restore_marks(restored, queue, snapshot);
+        }
+        let Some(config) = &self.persistent else {
+            return;
+        };
+        if self.cache_status.is_some() || self.cache_checked.len() == queue.entries().len() {
+            return;
+        }
+        let entries = queue
+            .entries()
+            .iter()
+            .filter(|entry| self.cache_checked.insert(entry.id))
+            .map(|entry| (entry.id, entry.source.clone()))
+            .collect();
+        match crate::analysis_cache::status::StatusJob::start(entries, config.clone()) {
+            Ok(job) => self.cache_status = Some(job),
+            Err(()) => config.warn(),
+        }
+    }
+
+    /// Merges observations without reviving removed rows or replacing newer attempts, including cancellations.
+    fn restore_marks(&self, restored: Vec<u64>, queue: &Queue<PathBuf>, snapshot: &mut Snapshot) {
+        for id in restored {
+            if queue.index_of(id).is_some() && !self.requested.contains(&id) {
+                Arc::make_mut(&mut snapshot.library_analysis)
+                    .entry(id)
+                    .or_insert(LibraryAnalysisStatus::Complete);
+            }
+        }
+    }
+
+    /// Publishes plots only for current playback and explicit inspection; other rows retain small statuses.
     fn poll(&mut self, snapshot: &mut Snapshot) {
         let Some(active) = &mut self.active else {
             return;
         };
         let current = active.generation == Some(snapshot.generation);
         let Some(result) = active.job.poll() else {
-            if current && !active.cancelled {
-                snapshot.analysis = AnalysisStatus::Running {
+            if !active.cancelled {
+                let status = AnalysisStatus::Running {
                     decoded_seconds: active.job.progress(),
                 };
+                if current {
+                    snapshot.analysis = status.clone();
+                }
+                update_inspection(snapshot, active.request.id, status);
             }
             return;
         };
@@ -307,15 +422,18 @@ impl AnalysisRuntime {
             Ok(report) => {
                 self.completed = Some(active.request.id);
                 mark(snapshot, active.request.id, LibraryAnalysisStatus::Complete);
+                let status = AnalysisStatus::Complete(Arc::new(report));
                 if current {
-                    snapshot.analysis = AnalysisStatus::Complete(Arc::new(report));
+                    snapshot.analysis = status.clone();
                 }
+                update_inspection(snapshot, active.request.id, status);
             }
             Err(_) => {
                 mark(snapshot, active.request.id, LibraryAnalysisStatus::Failed);
                 if current {
                     snapshot.analysis = AnalysisStatus::Unavailable;
                 }
+                update_inspection(snapshot, active.request.id, AnalysisStatus::Unavailable);
                 eprintln!("warn: track analysis unavailable");
             }
         }
@@ -331,15 +449,12 @@ impl AnalysisRuntime {
         let Some(request) = self.pending.front().copied() else {
             return;
         };
-        if request.foreground && player.is_none() {
-            return;
-        }
         self.pending.pop_front();
         let Some(index) = queue.index_of(request.id) else {
             return;
         };
         let selected = queue.current_id() == Some(request.id) && player.is_some();
-        let generation = if selected {
+        let generation = if queue.current_id() == Some(request.id) {
             Some(snapshot.generation)
         } else {
             None
@@ -368,12 +483,32 @@ impl AnalysisRuntime {
             }
             Err(()) => {
                 mark(snapshot, request.id, LibraryAnalysisStatus::Failed);
-                if selected {
+                if generation.is_some() {
                     snapshot.analysis = AnalysisStatus::Unavailable;
                 }
+                update_inspection(snapshot, request.id, AnalysisStatus::Unavailable);
                 eprintln!("warn: track analysis unavailable");
             }
         }
+    }
+}
+
+/// Only the requested occurrence may update the inspected plot; shared reports keep memory bounded.
+fn update_inspection(snapshot: &mut Snapshot, id: u64, status: AnalysisStatus) {
+    if let Some(view) = &mut snapshot.inspection
+        && view.id == id
+        && matches!(view.status, AnalysisStatus::Running { .. })
+    {
+        view.status = status;
+    }
+}
+
+/// Cancels unfinished inspection while preserving a completed result for review.
+fn cancel_inspection(snapshot: &mut Snapshot) {
+    if let Some(view) = &mut snapshot.inspection
+        && !matches!(view.status, AnalysisStatus::Complete(_))
+    {
+        view.status = AnalysisStatus::Cancelled;
     }
 }
 
@@ -402,6 +537,81 @@ fn start_selected(
 mod tests {
     use super::*;
 
+    /// Reopening a badge coalesces fresh retries, and only that inspection survives navigation.
+    #[test]
+    fn inspection_keeps_retry_intent_and_survives_navigation() {
+        let mut queue = Queue::with_seed(42);
+        queue.append(vec![
+            PathBuf::from("first.wav"),
+            PathBuf::from("second.wav"),
+        ]);
+        queue.select(0);
+        let id = queue.entries()[1].id;
+        let mut snapshot = Snapshot::default();
+        let mut runtime = AnalysisRuntime::default();
+        runtime.request_all(&queue, &mut snapshot);
+        runtime.inspect(&queue, &mut snapshot, id, true);
+        runtime.inspect(&queue, &mut snapshot, id, false);
+        assert_eq!(runtime.pending.len(), 2);
+        let pending = runtime.pending.front().unwrap();
+        assert_eq!(pending.id, id);
+        assert!(pending.foreground && pending.force);
+
+        runtime.reset(&mut snapshot);
+        assert_eq!(runtime.pending.len(), 2);
+        assert!(matches!(
+            snapshot.inspection.as_ref().unwrap().status,
+            AnalysisStatus::Running { .. }
+        ));
+
+        runtime.request(&queue, &mut snapshot, false);
+        assert!(snapshot.inspection.is_none());
+        assert_eq!(runtime.pending.len(), 1);
+        assert_eq!(
+            runtime.pending.front().unwrap().id,
+            queue.current_id().unwrap()
+        );
+    }
+
+    /// Late cached observations cannot overwrite attempts or reintroduce removed/cancelled occurrences.
+    #[test]
+    fn cached_marks_respect_newer_attempts_and_removed_rows() {
+        let mut queue = Queue::with_seed(42);
+        queue.append(
+            (0..4)
+                .map(|index| PathBuf::from(format!("track-{index}.wav")))
+                .collect(),
+        );
+        let ids: Vec<_> = queue.entries().iter().map(|entry| entry.id).collect();
+        let mut snapshot = Snapshot::default();
+        let mut runtime = AnalysisRuntime::default();
+        runtime.request_track(&queue, &mut snapshot, ids[0]);
+        runtime.restore_marks(vec![ids[0], ids[1], u64::MAX], &queue, &mut snapshot);
+        assert_eq!(
+            snapshot.library_analysis[&ids[0]],
+            LibraryAnalysisStatus::Queued
+        );
+        assert_eq!(
+            snapshot.library_analysis[&ids[1]],
+            LibraryAnalysisStatus::Complete
+        );
+        assert!(!snapshot.library_analysis.contains_key(&u64::MAX));
+        runtime.cancel(&mut snapshot);
+        runtime.restore_marks(vec![ids[0]], &queue, &mut snapshot);
+        assert!(!snapshot.library_analysis.contains_key(&ids[0]));
+        mark(&mut snapshot, ids[2], LibraryAnalysisStatus::Failed);
+        mark(&mut snapshot, ids[3], LibraryAnalysisStatus::Running);
+        runtime.restore_marks(ids.clone(), &queue, &mut snapshot);
+        assert_eq!(
+            snapshot.library_analysis[&ids[2]],
+            LibraryAnalysisStatus::Failed
+        );
+        assert_eq!(
+            snapshot.library_analysis[&ids[3]],
+            LibraryAnalysisStatus::Running
+        );
+    }
+
     /// Library scheduling is bounded by stable IDs, while view promotion/cancellation leaves unrelated work intact.
     #[test]
     fn batch_coalesces_and_yields_to_rhythm() {
@@ -419,7 +629,10 @@ mod tests {
         runtime.request_all(&queue, &mut snapshot);
         runtime.request_all(&queue, &mut snapshot);
         assert!(runtime.pending.iter().all(|request| !request.force));
-        assert_eq!(runtime.pending.len(), resolibre_core::queue::MAX_QUEUE_ITEMS);
+        assert_eq!(
+            runtime.pending.len(),
+            resolibre_core::queue::MAX_QUEUE_ITEMS
+        );
         assert!(
             !runtime.wants_worker(),
             "background requests must yield to automatic rhythm"
@@ -429,7 +642,10 @@ mod tests {
             runtime.wants_worker(),
             "explicit current analysis can interrupt automatic rhythm"
         );
-        assert_eq!(runtime.pending.len(), resolibre_core::queue::MAX_QUEUE_ITEMS);
+        assert_eq!(
+            runtime.pending.len(),
+            resolibre_core::queue::MAX_QUEUE_ITEMS
+        );
         runtime.cancel_view(&mut snapshot);
         assert_eq!(
             runtime.pending.len(),
@@ -451,6 +667,9 @@ mod tests {
             runtime.pending.front().unwrap().id,
             queue.current_id().unwrap()
         );
-        assert_eq!(runtime.pending.len(), resolibre_core::queue::MAX_QUEUE_ITEMS);
+        assert_eq!(
+            runtime.pending.len(),
+            resolibre_core::queue::MAX_QUEUE_ITEMS
+        );
     }
 }

@@ -45,6 +45,15 @@ The local player uses Rust, libmpv and Slint; libsmb2 and SQLite are later adapt
 Full UI/skin feasibility remains open. Core builds without GUI/native dependencies;
 the desktop dependencies are pinned in Cargo.lock. Ordinary use leaves music intact.
 
+## Local builds
+
+```sh
+python3 build_debug.py
+python3 build_release.py
+```
+
+Add `--run` to launch after building. See [local build options and OS support](docs/development/local-builds.md).
+
 ## Contributing
 
 Read the affected area's rules and focused documents before implementation.

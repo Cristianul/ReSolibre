@@ -19,3 +19,10 @@ opt-level = 3
 
 [profile.dev.package.rustfft]
 opt-level = 3
+
+# Optimize local production builds while retaining Rust's normal panic recovery behavior.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

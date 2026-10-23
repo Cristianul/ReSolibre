@@ -58,6 +58,9 @@ READING_FLOWS = {
         TARGET + "core-and-platforms.md",
         LOCAL_PLAYBACK,
     ),
+    "local-builds": CORE_CONTEXT + DESKTOP_CONTEXT + VERIFICATION + (
+        "docs/development/local-builds.md",
+    ),
     "native-environment": CORE_CONTEXT + VERIFICATION + (
         "docs/development/native-environment.md",
         TARGET + "delivery-and-licensing.md",

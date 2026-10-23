@@ -20,6 +20,8 @@ pub(crate) struct AnalysisHost {
     window: Option<AnalysisWindow>,
     windows: crate::window_group::SharedGroup,
     generation: Rc<Cell<Option<u64>>>,
+    track_id: Rc<Cell<Option<u64>>>,
+    source_duration: Option<f64>,
     rendered: Option<Arc<TrackAnalysis>>,
     requested_revision: u64,
     source_bits: Option<u8>,
@@ -31,22 +33,33 @@ impl AnalysisHost {
         &mut self,
         main: &PlayerWindow,
         controller: &Rc<RefCell<Controller>>,
+        track_id: Option<u64>,
         force: bool,
     ) -> Result<(), &'static str> {
+        let snapshot = controller.borrow().snapshot();
+        let index = match track_id {
+            Some(id) => Some(
+                snapshot
+                    .tracks
+                    .iter()
+                    .position(|track| track.id == id)
+                    .ok_or("This track is no longer in the library")?,
+            ),
+            None => snapshot.current,
+        };
         if self.window.is_none() {
             let window = AnalysisWindow::new().map_err(|_| "Cannot create analysis window")?;
             let weak = main.as_weak();
             let view = window.as_weak();
             let owner = Rc::downgrade(controller);
             let target = Rc::clone(&self.generation);
+            let inspected = Rc::clone(&self.track_id);
             window.window().on_close_requested(move || {
                 if let (Some(main), Some(view), Some(controller)) =
                     (weak.upgrade(), view.upgrade(), owner.upgrade())
                 {
-                    let generation = target.get().unwrap_or(0);
-                    controller
-                        .borrow_mut()
-                        .submit(&main, Command::CancelAnalysis { generation });
+                    let command = cancel_command(target.get(), inspected.get());
+                    controller.borrow_mut().submit(&main, command);
                     if view.hide().is_err() {
                         eprintln!("warn: cannot hide analysis window");
                     }
@@ -57,43 +70,57 @@ impl AnalysisHost {
             let weak = main.as_weak();
             let owner = Rc::downgrade(controller);
             let target = Rc::clone(&self.generation);
+            let inspected = Rc::clone(&self.track_id);
             window.on_cancel_analysis(move || {
                 if let (Some(main), Some(controller)) = (weak.upgrade(), owner.upgrade()) {
-                    let generation = target.get().unwrap_or(0);
-                    controller
-                        .borrow_mut()
-                        .submit(&main, Command::CancelAnalysis { generation });
+                    let command = cancel_command(target.get(), inspected.get());
+                    controller.borrow_mut().submit(&main, command);
                 }
             });
             let weak = main.as_weak();
+            let inspected = Rc::clone(&self.track_id);
             window.on_retry_analysis(move || {
                 if let Some(main) = weak.upgrade() {
-                    main.invoke_reanalyze_current();
+                    if let Some(id) = inspected.get() {
+                        main.invoke_reanalyze_track(id.to_string().into());
+                    } else {
+                        main.invoke_reanalyze_current();
+                    }
                 }
             });
             let events = crate::window_events::WindowEvents::new(window.window());
             crate::window_group::WindowGroup::watch(&self.windows, &window, &events);
             self.window = Some(window);
         }
-        let snapshot = controller.borrow().snapshot();
         self.generation.set(Some(snapshot.generation));
+        self.track_id.set(track_id);
+        let track = index.and_then(|index| snapshot.tracks.get(index));
+        let stream_info = if index == snapshot.current {
+            snapshot.stream_info
+        } else {
+            None
+        };
+        self.source_duration = if index == snapshot.current {
+            snapshot.duration
+        } else {
+            None
+        }
+        .or_else(|| track.and_then(|track| track.duration_seconds.map(f64::from)));
         self.rendered = None;
         let window = self
             .window
             .as_ref()
             .ok_or("Cannot create analysis window")?;
+        window.set_library_inspection(track_id.is_some());
         window.set_track_title(
-            snapshot
-                .current
-                .and_then(|index| snapshot.tracks.get(index))
+            track
                 .map(|track| track.title.as_str())
                 .unwrap_or("No track")
                 .into(),
         );
-        self.source_bits = snapshot.stream_info.and_then(|info| info.bits_per_sample);
+        self.source_bits = stream_info.and_then(|info| info.bits_per_sample);
         window.set_frequency_note(
-            snapshot
-                .stream_info
+            stream_info
                 .and_then(|info| info.sample_rate_hz)
                 .map(frequency_note)
                 .unwrap_or_default()
@@ -106,8 +133,7 @@ impl AnalysisHost {
         window.set_tempo_text("BPM: analyzing rhythmic changes…".into());
         window.set_interpretation("Original decoded audio, before EQ and volume. Origin unknown; a lossless codec does not prove an originally lossless recording.".into());
         window.set_facts(
-            snapshot
-                .stream_info
+            stream_info
                 .map(|info| {
                     format!(
                         "{} · {}",
@@ -121,7 +147,9 @@ impl AnalysisHost {
         window.set_status_text("Starting analysis…".into());
         window.set_running(true);
         let generation = snapshot.generation;
-        let command = if force {
+        let command = if let Some(id) = track_id {
+            Command::InspectTrack { id, force }
+        } else if force {
             Command::Analyze { generation }
         } else {
             Command::ViewAnalysis { generation }
@@ -148,7 +176,7 @@ impl AnalysisHost {
         if snapshot.revision < self.requested_revision || self.rendered.is_some() {
             return;
         }
-        if self.generation.get() != Some(snapshot.generation) {
+        if self.track_id.get().is_none() && self.generation.get() != Some(snapshot.generation) {
             window.set_running(false);
             window.set_status_text(
                 "Playback changed before analysis completed. Analyze the current track to retry."
@@ -156,11 +184,23 @@ impl AnalysisHost {
             );
             return;
         }
-        window.set_running(matches!(snapshot.analysis, AnalysisStatus::Running { .. }));
-        match &snapshot.analysis {
+        let status = if let Some(id) = self.track_id.get() {
+            let Some(view) = snapshot.inspection.as_ref().filter(|view| view.id == id) else {
+                window.set_running(false);
+                window.set_status_text(
+                    "This track's analysis is no longer available. Retry to analyze it.".into(),
+                );
+                return;
+            };
+            &view.status
+        } else {
+            &snapshot.analysis
+        };
+        window.set_running(matches!(status, AnalysisStatus::Running { .. }));
+        match status {
             AnalysisStatus::Running { decoded_seconds } => {
                 let progress =
-                    if let Some(duration) = snapshot.duration.filter(|value| *value > 0.0) {
+                    if let Some(duration) = self.source_duration.filter(|value| *value > 0.0) {
                         format!(
                             "Analyzing original audio… {:.0}% ({decoded_seconds:.1} s decoded)",
                             (decoded_seconds / duration * 100.0).min(99.0)
@@ -169,7 +209,9 @@ impl AnalysisHost {
                         format!("Analyzing original audio… {decoded_seconds:.1} s decoded")
                     };
                 window.set_status_text(progress.into());
-                if let resolibre_audio::session::RhythmStatus::Ready(report) = &snapshot.rhythm {
+                if self.track_id.get().is_none()
+                    && let resolibre_audio::session::RhythmStatus::Ready(report) = &snapshot.rhythm
+                {
                     window.set_tempo_text(tempo_text(report).into());
                 }
             }
@@ -209,7 +251,7 @@ impl AnalysisHost {
                 window.set_plot(Image::default());
                 window.set_tempo_text("BPM: not available".into());
                 self.rendered = None;
-                let message = if matches!(snapshot.analysis, AnalysisStatus::Cancelled) {
+                let message = if matches!(status, AnalysisStatus::Cancelled) {
                     "Analysis cancelled. No partial result is used."
                 } else {
                     "Analysis unavailable: decoder, changed source or resource limit. Playback continues; retry is available."
@@ -311,6 +353,8 @@ pub(crate) fn connect(
     }));
     main.on_open_analysis(open_action(main, controller, &host, false));
     main.on_reanalyze_current(open_action(main, controller, &host, true));
+    main.on_open_track_analysis(track_action(main, controller, &host, false));
+    main.on_reanalyze_track(track_action(main, controller, &host, true));
     host
 }
 
@@ -330,11 +374,47 @@ fn open_action(
             && main.get_analysis_enabled()
             && !main.get_closing()
             && !main.get_settings_loading()
-            && let Err(error) = host.borrow_mut().show(&main, &controller, force)
+            && let Err(error) = host.borrow_mut().show(&main, &controller, None, force)
         {
             main.set_error_message(error.into());
             eprintln!("warn: {error}");
         }
+    }
+}
+
+/// Routes a library badge or retry to its stable occurrence without requiring active playback.
+fn track_action(
+    main: &PlayerWindow,
+    controller: &Rc<RefCell<Controller>>,
+    host: &Rc<RefCell<AnalysisHost>>,
+    force: bool,
+) -> impl Fn(slint::SharedString) + 'static {
+    let weak = main.as_weak();
+    let owner = Rc::downgrade(controller);
+    let view = Rc::downgrade(host);
+    move |id| {
+        if let (Some(main), Some(controller), Some(host), Ok(id)) = (
+            weak.upgrade(),
+            owner.upgrade(),
+            view.upgrade(),
+            id.parse::<u64>(),
+        ) && !main.get_closing()
+            && !main.get_settings_loading()
+            && let Err(error) = host.borrow_mut().show(&main, &controller, Some(id), force)
+        {
+            main.set_error_message(error.into());
+            eprintln!("warn: {error}");
+        }
+    }
+}
+
+/// Closing/cancelling targets the displayed request rather than whichever track is now playing.
+fn cancel_command(generation: Option<u64>, id: Option<u64>) -> Command {
+    match id {
+        Some(id) => Command::CancelInspection { id },
+        None => Command::CancelAnalysis {
+            generation: generation.unwrap_or(0),
+        },
     }
 }
 

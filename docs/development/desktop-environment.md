@@ -5,7 +5,7 @@ Linux x86_64 reference: same libmpv/FFmpeg and Rust setup as the
 xkbcommon development packages, an X11/Wayland session and a working desktop portal.
 Slint 1.18.1 uses Winit/FemtoVG with accessibility; rfd 0.17.2 uses the XDG portal.
 No Qt, webview, embedded test server, tray or broad image-format features enabled.
-Cargo.lock pins dependencies; the portable core still has no registry dependencies.
+Cargo.lock pins dependencies; see [local build scripts](local-builds.md) for debug/release setup.
 
 On this workstation, signed Fedora development RPMs were extracted under ignored
 `.local/native`, without system installation. The native guide's RUSTFLAGS and

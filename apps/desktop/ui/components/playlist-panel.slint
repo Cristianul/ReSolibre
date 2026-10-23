@@ -16,6 +16,7 @@ export component PlaylistPanel inherits Rectangle {
     in property <string> analysis-summary;
     pure callback analysis-state([AnalysisRow], string) -> int;
     callback analyze-track(string);
+    callback view-track-analysis(string);
     callback analyze-all();
     callback cancel-analysis();
     in property <int> total-tracks;
@@ -61,6 +62,7 @@ export component PlaylistPanel inherits Rectangle {
                 analysis-states: root.analysis-states;
                 analysis-state(states, id) => { root.analysis-state(states, id) }
                 analyze(id) => { root.analyze-track(id); }
+                view-analysis(id) => { root.view-track-analysis(id); }
                 tracks: root.tracks; current: root.current; playing: root.playing;
                 motion-enabled: root.motion-enabled; spectrum: root.spectrum; enabled: !root.closing;
                 scroll <=> root.scroll; selected-id <=> root.selected-id;

@@ -234,7 +234,8 @@ fn result_view_waits_for_requested_revision_and_rejects_other_tracks() {
 fn artwork_action_and_close_restore_focus() {
     i_slint_backend_testing::init_no_event_loop();
     let main = PlayerWindow::new().unwrap();
-    let session = resolibre_audio::session::Session::start(resolibre_audio::AudioOutput::Silent).unwrap();
+    let session =
+        resolibre_audio::session::Session::start(resolibre_audio::AudioOutput::Silent).unwrap();
     let controller = Rc::new(RefCell::new(Controller::new(session)));
     let host = connect(&main, &controller, Default::default());
     main.set_analysis_enabled(true);
@@ -307,7 +308,8 @@ fn native_analysis_preview() {
 fn native_analysis_journey() {
     use std::time::{Duration, Instant};
     crate::window_snap::select_x11().unwrap();
-    let directory = std::env::temp_dir().join(format!("resolibre-analysis-ui-{}", std::process::id()));
+    let directory =
+        std::env::temp_dir().join(format!("resolibre-analysis-ui-{}", std::process::id()));
     std::fs::create_dir(&directory).unwrap();
     let path = crate::ui_tests::write_ui_fixture(&directory);
     let mut bytes = std::fs::read(&path).unwrap();
@@ -433,12 +435,116 @@ fn save_window(window: &slint::Window, name: &str) {
     .unwrap();
 }
 
+/// Stopped artwork and off-track Library actions use production wiring, preserving playback and source facts.
+#[test]
+fn stopped_artwork_and_library_badge_share_the_inspection_window() {
+    use resolibre_core::session::SessionState;
+    i_slint_backend_testing::init_no_event_loop();
+    let directory = std::env::temp_dir().join(format!(
+        "resolibre-stopped-inspection-ui-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = crate::ui_tests::write_ui_fixture(&directory);
+    let original = std::fs::read(&path).unwrap();
+    let other = directory.join("Other.wav");
+    std::fs::write(&other, &original).unwrap();
+    let main = PlayerWindow::new().unwrap();
+    let controller = Rc::new(RefCell::new(Controller::new(
+        resolibre_audio::session::Session::start(resolibre_audio::AudioOutput::Silent).unwrap(),
+    )));
+    crate::presentation::connect(&main, &controller);
+    let host = connect(&main, &controller, Default::default());
+    let library = crate::playlist_window::connect(&main, Default::default(), Default::default());
+    controller
+        .borrow_mut()
+        .submit(&main, Command::Open(vec![path.clone(), other.clone()]));
+    pump_until(&main, &controller, &host, |snapshot| {
+        snapshot.state == SessionState::Playing
+    });
+    controller.borrow_mut().submit(&main, Command::Stop);
+    pump_until(&main, &controller, &host, |snapshot| {
+        snapshot.state == SessionState::Stopped
+    });
+    assert!(main.get_analysis_enabled());
+    main.invoke_open_analysis();
+    pump_until(&main, &controller, &host, |snapshot| {
+        matches!(snapshot.analysis, AnalysisStatus::Complete(_))
+    });
+    let view = host.borrow().window.as_ref().unwrap().clone_strong();
+    assert!(view.get_ready());
+    assert!(!view.get_library_inspection());
+
+    library.borrow_mut().show(&main, &library).unwrap();
+    let target = controller.borrow().snapshot().tracks[1].id;
+    library
+        .borrow()
+        .test_window()
+        .invoke_view_track_analysis(target.to_string().into());
+    pump_until(&main, &controller, &host, |snapshot| {
+        snapshot.inspection.as_ref().is_some_and(|view| {
+            view.id == target && matches!(view.status, AnalysisStatus::Complete(_))
+        })
+    });
+    assert!(view.get_ready());
+    assert!(view.get_library_inspection());
+    assert!(view.get_track_title().contains("Other"));
+    assert_eq!(
+        view.get_facts(),
+        "Stream information unavailable",
+        "never show another track's codec facts"
+    );
+    let previous = host.borrow().rendered.clone().unwrap();
+    view.invoke_retry_analysis();
+    pump_until(&main, &controller, &host, |snapshot| {
+        snapshot.inspection.as_ref().is_some_and(|view| {
+        matches!(&view.status, AnalysisStatus::Complete(report) if !Arc::ptr_eq(&previous, report))
+    })
+    });
+    assert_eq!(controller.borrow().snapshot().current, Some(0));
+    assert_eq!(controller.borrow().snapshot().state, SessionState::Stopped);
+    assert!(view.get_track_title().contains("Other"));
+    library.borrow_mut().close();
+    host.borrow_mut().close();
+    drop(library);
+    drop(host);
+    drop(controller);
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(std::fs::read(&other).unwrap(), original);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// Pumps production presentation and inspection bindings until the requested worker observation is visible.
+fn pump_until(
+    main: &PlayerWindow,
+    controller: &Rc<RefCell<Controller>>,
+    host: &Rc<RefCell<AnalysisHost>>,
+    condition: impl Fn(&Snapshot) -> bool,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        controller.borrow_mut().refresh(main);
+        let snapshot = controller.borrow().snapshot();
+        host.borrow_mut().refresh(&snapshot);
+        if condition(&snapshot) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "inspection did not complete"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 /// The visible retry button replaces a completed report through production bindings without restarting audio.
 #[test]
 fn retry_button_replaces_completed_report() {
     i_slint_backend_testing::init_no_event_loop();
-    let directory =
-        std::env::temp_dir().join(format!("resolibre-analysis-retry-ui-{}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!(
+        "resolibre-analysis-retry-ui-{}",
+        std::process::id()
+    ));
     std::fs::create_dir(&directory).unwrap();
     let path = crate::ui_tests::write_ui_fixture(&directory);
     let original = std::fs::read(&path).unwrap();
@@ -471,7 +577,10 @@ fn retry_button_replaces_completed_report() {
             if let Some((generation, previous)) = &previous {
                 if !Arc::ptr_eq(previous, &report) {
                     assert_eq!(*generation, snapshot.generation);
-                    assert_eq!(snapshot.state, resolibre_core::session::SessionState::Playing);
+                    assert_eq!(
+                        snapshot.state,
+                        resolibre_core::session::SessionState::Playing
+                    );
                     break;
                 }
             } else {

@@ -2,7 +2,7 @@
 
 mod analysis;
 mod rhythm;
-pub use analysis::{AnalysisStatus, LibraryAnalysisStatus};
+pub use analysis::{AnalysisInspection, AnalysisStatus, LibraryAnalysisStatus};
 pub use rhythm::{PreparedRhythm, RhythmStatus};
 
 mod edges;
@@ -84,6 +84,7 @@ pub struct Snapshot {
     pub duration: Option<f64>,
     pub seekable: bool,
     pub analysis: AnalysisStatus,
+    pub inspection: Option<AnalysisInspection>,
     pub library_analysis: Arc<std::collections::BTreeMap<u64, LibraryAnalysisStatus>>,
     pub analysis_pending: usize,
     pub rhythm: RhythmStatus,
@@ -130,6 +131,7 @@ impl Default for Snapshot {
             duration: None,
             seekable: false,
             analysis: AnalysisStatus::Idle,
+            inspection: None,
             library_analysis: Arc::default(),
             analysis_pending: 0,
             rhythm: RhythmStatus::Detecting,
@@ -163,6 +165,13 @@ pub enum Command {
     },
     ViewAnalysis {
         generation: u64,
+    },
+    InspectTrack {
+        id: u64,
+        force: bool,
+    },
+    CancelInspection {
+        id: u64,
     },
     AnalyzeTrack {
         id: u64,

@@ -88,8 +88,7 @@ push without authorization. Check staging and ignores before reporting.
 
 ## Commit messages
 
-When authorized, use an outcome-focused title and plain-language changelist:
-what/why, checks and material limits. Describe staged changes for users and
-maintainers; explain jargon, distinguish planned from working features, omit
-conversation/abandoned plans. A relevant joke is welcome, except around failures
-or security.
+When authorized, use Conventional Commits: `<type>[optional scope][!]: <summary>`.
+Describe staged outcomes in plain language; body: what/why, checks and limits.
+Explain jargon, distinguish planned from working features, omit conversation and
+abandoned plans. Relevant jokes are welcome, except around failures or security.

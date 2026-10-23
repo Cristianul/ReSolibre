@@ -1,4 +1,6 @@
-//! Optional persistent cache orchestration, exclusively inside the owned analysis jobs.
+//! Optional persistent cache orchestration, exclusively inside owned background jobs.
+
+pub(crate) mod status;
 
 use crate::original_audio::SourceKey;
 use resolibre_storage::{
@@ -24,6 +26,17 @@ impl CacheConfig {
         Self {
             directory,
             warned: AtomicBool::new(false),
+        }
+    }
+
+    /// Opens profile storage only on a background worker, sharing the session's warning boundary.
+    pub(crate) fn database(&self) -> Option<AnalysisCache> {
+        match AnalysisCache::open(&self.directory) {
+            Ok(database) => Some(database),
+            Err(_) => {
+                self.warn();
+                None
+            }
         }
     }
 

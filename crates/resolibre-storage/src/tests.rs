@@ -109,6 +109,48 @@ fn restart_reuses_results_and_keeps_labels_out_of_identity() {
     assert!(cache.rhythm(&key, false).unwrap().is_none());
 }
 
+/// File-fact hints cannot mark missing, corrupt, cleared or another profile's results as complete.
+#[test]
+fn track_source_hints_require_a_valid_full_report_in_the_same_profile() {
+    let fixture = Fixture::new();
+    let mut cache = fixture.cache();
+    let key = identity();
+    let facts = [7; 56];
+    assert!(!cache.has_tracks().unwrap());
+    cache.save_track_source(&facts, &key).unwrap();
+    cache.save_rhythm(&key, true, &rhythm()).unwrap();
+    assert!(
+        !cache.has_track(&key).unwrap(),
+        "rhythm alone has no full-analysis badge"
+    );
+    cache.save_track(&key, &track()).unwrap();
+    drop(cache);
+
+    let mut cache = fixture.cache();
+    let hint = cache.track_source(&facts).unwrap().unwrap();
+    assert_eq!(hint.digest, key.digest);
+    assert!(cache.has_track(&hint).unwrap());
+    assert!(cache.track_source(&[8; 56]).unwrap().is_none());
+    assert!(cache.track_source(&[7; 55]).is_err());
+    assert!(cache.save_track_source(&[7; 55], &key).is_err());
+    let other_profile = Fixture::new();
+    assert!(
+        other_profile
+            .cache()
+            .track_source(&facts)
+            .unwrap()
+            .is_none()
+    );
+    cache.write(&key, 2, b"corrupt report").unwrap();
+    assert!(!cache.has_track(&hint).unwrap());
+    cache.save_track(&key, &track()).unwrap();
+    cache.clear().unwrap();
+    assert!(
+        !cache.has_track(&hint).unwrap(),
+        "cleared/evicted results cannot restore badges"
+    );
+}
+
 /// Cached bytes are untrusted: invalid geometry, beats, JSON and unsupported schemas fail closed.
 #[test]
 fn corrupt_results_and_databases_do_not_authorize_measurements() {

@@ -113,6 +113,8 @@ impl Worker {
             | Command::Equalizer(_)
             | Command::Analyze { .. }
             | Command::ViewAnalysis { .. }
+            | Command::InspectTrack { .. }
+            | Command::CancelInspection { .. }
             | Command::AnalyzeTrack { .. }
             | Command::AnalyzeAll
             | Command::CancelAllAnalysis

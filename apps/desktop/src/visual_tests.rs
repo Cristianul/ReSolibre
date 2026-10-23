@@ -7,6 +7,99 @@ use slint::ComponentHandle;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Visible running bars move independently; queued/completed/failed and reduced-motion states remain static.
+#[test]
+fn analysis_badge_animates_only_while_running_and_motion_enabled() {
+    use slint::{ModelRc, VecModel};
+    use std::time::Duration;
+    i_slint_backend_testing::init_no_event_loop();
+    let window = crate::playlist_window::new_window().unwrap();
+    window.set_tracks(ModelRc::new(VecModel::from(vec![crate::TrackRow {
+        id: "1".into(),
+        number: "1".into(),
+        title: "Analysis fixture".into(),
+        duration: "00:02".into(),
+        ..Default::default()
+    }])));
+    window.set_analysis_states(ModelRc::new(VecModel::from(vec![crate::AnalysisRow {
+        id: "1".into(),
+        status: 2,
+    }])));
+    window.show().unwrap();
+    window
+        .window()
+        .set_size(slint::LogicalSize::new(420.0, 516.0));
+    let indicator = ElementHandle::find_by_accessible_label(&window, "Analyzing")
+        .next()
+        .unwrap();
+    let bars = indicator
+        .query_descendants()
+        .match_id("AnalysisIndicator::bar")
+        .find_all();
+    assert_eq!(bars.len(), 3);
+    assert!((bars[0].size().height - bars[1].size().height).abs() > 1.0);
+    assert!((bars[1].size().height - bars[2].size().height).abs() > 1.0);
+    let bar = &bars[0];
+    let first = bar.size().height;
+    i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(225));
+    let second = bar.size().height;
+    assert!(
+        (first - second).abs() > 1.0,
+        "running strokes must change height"
+    );
+    i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(450));
+    assert!(
+        (bar.size().height - second).abs() > 1.0,
+        "strokes must shrink as well as grow"
+    );
+    window.set_motion_enabled(false);
+    assert!(
+        indicator
+            .query_descendants()
+            .match_id("AnalysisIndicator::bar")
+            .find_first()
+            .is_none()
+    );
+    window.set_motion_enabled(true);
+    assert!(
+        indicator
+            .query_descendants()
+            .match_id("AnalysisIndicator::bar")
+            .find_first()
+            .is_some()
+    );
+    window.window().set_minimized(true);
+    assert!(
+        indicator
+            .query_descendants()
+            .match_id("AnalysisIndicator::bar")
+            .find_first()
+            .is_none()
+    );
+    window.window().set_minimized(false);
+    for (status, label) in [
+        (1, "Analysis queued"),
+        (3, "Analysis complete"),
+        (4, "Analysis failed"),
+    ] {
+        window.set_analysis_states(ModelRc::new(VecModel::from(vec![crate::AnalysisRow {
+            id: "1".into(),
+            status,
+        }])));
+        let indicator = ElementHandle::find_by_accessible_label(&window, label)
+            .next()
+            .unwrap();
+        assert!(
+            indicator
+                .query_descendants()
+                .match_id("AnalysisIndicator::bar")
+                .find_first()
+                .is_none()
+        );
+    }
+    window.hide().unwrap();
+}
+
 /// The passive selector face preserves pointer opening, keyboard selection and disabled guards.
 #[test]
 fn styled_dropdown_preserves_toolkit_selection() {

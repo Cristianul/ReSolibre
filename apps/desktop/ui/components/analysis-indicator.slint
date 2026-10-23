@@ -1,0 +1,36 @@
+import { Icon } from "icon.slint";
+import { Theme } from "theme.slint";
+
+// The Lucide chart's three strokes grow independently only while visible analysis is running.
+export component AnalysisIndicator inherits Rectangle {
+    in property <int> status;
+    in property <bool> motion-enabled;
+    in property <bool> spectrum;
+    private property <bool> running: root.status == 2 && root.motion-enabled;
+    private property <color> ink: root.status == 3 ? (root.spectrum ? Theme.spectrum-accent : Theme.accent) : Theme.muted;
+    private property <float> phase: root.running ? animation-tick() / Theme.analysis-bar-period : 0;
+    width: 18px; height: 18px;
+    accessible-role: text;
+    accessible-label: root.status == 3 ? @tr("Analysis complete") : root.status == 4 ? @tr("Analysis failed") : root.status == 2 ? @tr("Analyzing") : @tr("Analysis queued");
+
+    if !root.running: Icon {
+        width: root.width; height: root.height;
+        source: @image-url("../assets/analysis.svg"); colorize: root.ink;
+    }
+    if root.running: Rectangle {
+        width: root.width; height: root.height;
+        for index in 3: bar := Rectangle {
+            x: (4 + 7 * index) * root.width / 24;
+            y: root.height * 22 / 24 - self.height;
+            width: root.width * 2 / 24;
+            height: root.height * (13 + 7 * sin((root.phase - floor(root.phase) + index / 3) * 360deg)) / 24;
+            border-radius: self.width / 2;
+            background: root.ink;
+        }
+    }
+    if root.status == 4: Rectangle {
+        x: 9px; y: 9px; width: 12px; height: 12px;
+        border-radius: 6px; background: Theme.inset;
+        Icon { source: @image-url("../assets/x.svg"); colorize: Theme.error; }
+    }
+}

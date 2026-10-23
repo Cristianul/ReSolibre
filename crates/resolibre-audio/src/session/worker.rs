@@ -192,12 +192,12 @@ impl Worker {
                 self.snapshot.mix_enabled = enabled;
             }
             Command::Analyze { generation } => {
-                if generation == self.snapshot.generation && self.player.is_some() {
+                if generation == self.snapshot.generation {
                     self.analysis.request(&self.queue, &mut self.snapshot, true);
                 }
             }
             Command::ViewAnalysis { generation } => {
-                if generation == self.snapshot.generation && self.player.is_some() {
+                if generation == self.snapshot.generation {
                     self.analysis
                         .request(&self.queue, &mut self.snapshot, false);
                 }
@@ -205,6 +205,20 @@ impl Worker {
             Command::AnalyzeTrack { id } => {
                 self.analysis
                     .request_track(&self.queue, &mut self.snapshot, id)
+            }
+            Command::InspectTrack { id, force } => {
+                self.analysis
+                    .inspect(&self.queue, &mut self.snapshot, id, force);
+            }
+            Command::CancelInspection { id } => {
+                if self
+                    .snapshot
+                    .inspection
+                    .as_ref()
+                    .is_some_and(|view| view.id == id)
+                {
+                    self.analysis.cancel_view(&mut self.snapshot);
+                }
             }
             Command::AnalyzeAll => self.analysis.request_all(&self.queue, &mut self.snapshot),
             Command::CancelAllAnalysis => self.analysis.cancel(&mut self.snapshot),

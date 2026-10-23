@@ -41,6 +41,8 @@ export component PlayerWindow inherits Window {
     in property <bool> analysis-enabled;
     callback open-analysis();
     callback reanalyze-current();
+    callback open-track-analysis(string);
+    callback reanalyze-track(string);
     callback focus-analysis();
     focus-analysis => { analysis-button.focus(); }
     in property <image> cover-image;
@@ -230,9 +232,9 @@ export component PlayerWindow inherits Window {
                     artwork-hover := TouchArea { }
                     analysis-button := ActionButton {
                         x: parent.width - self.width - 8px; y: parent.height - self.height - 8px;
-                        width: 100px; height: 32px; compact: true;
-                        label: @tr("Analyze track: spectrogram and BPM"); caption: @tr("Analyze");
-                        icon: @image-url("assets/search.svg");
+                        width: 32px; height: 32px; compact: true;
+                        label: @tr("Analyze track: spectrogram and BPM");
+                        icon: @image-url("assets/analysis.svg");
                         enabled: root.analysis-enabled && !root.closing && !root.settings-loading;
                         opacity: artwork-hover.has-hover || self.hovered || self.focused ? 1 : 0;
                         clicked => { root.open-analysis(); }

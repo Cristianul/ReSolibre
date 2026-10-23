@@ -50,6 +50,12 @@ impl PlaylistHost {
             }
         });
         let weak = main.as_weak();
+        window.on_view_track_analysis(move |id| {
+            if let Some(main) = weak.upgrade() {
+                main.invoke_open_track_analysis(id);
+            }
+        });
+        let weak = main.as_weak();
         window.on_analyze_all(move || {
             if let Some(main) = weak.upgrade() {
                 main.invoke_analyze_all();

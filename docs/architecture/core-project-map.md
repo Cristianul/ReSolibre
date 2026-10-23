@@ -17,8 +17,8 @@
 
 [Playback](features/local-playback.md).
 [Desktop](features/local-desktop-player.md); [restore](features/session-persistence.md).
-[Controls/resources](../testing/playback-responsiveness-validation.md).
-[Plan](../plans/local-desktop-player-plan.md); [SMB](../plans/smb-playback-plan.md) later.
+[Controls](../testing/playback-responsiveness-validation.md).
+[Plan](../plans/local-desktop-player-plan.md); [SMB](../plans/smb-playback-plan.md) planned.
 
 | Target | Read for |
 | --- | --- |

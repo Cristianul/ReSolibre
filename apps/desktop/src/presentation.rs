@@ -367,16 +367,19 @@ impl Controller {
             crate::artwork::update(window, &snapshot);
             self.cover_revision = snapshot.cover_revision;
         }
-        window.set_analysis_enabled(matches!(
-            snapshot.state,
-            SessionState::Playing | SessionState::Paused
-        ));
+        window.set_analysis_enabled(
+            snapshot
+                .current
+                .and_then(|index| snapshot.tracks.get(index))
+                .is_some(),
+        );
         show_snapshot(window, &snapshot);
         self.spectrum.observe(window, &snapshot);
         let error = self.local_error.as_ref().or(snapshot.error.as_ref());
         window.set_error_message(error.map(String::as_str).unwrap_or("").into());
         if self.session.is_finished() && !snapshot.finished {
-            window.set_error_message("Playback worker stopped unexpectedly; reopen ReSolibre".into());
+            window
+                .set_error_message("Playback worker stopped unexpectedly; reopen ReSolibre".into());
         }
     }
 
@@ -520,7 +523,9 @@ fn show_snapshot(window: &PlayerWindow, snapshot: &Snapshot) {
     };
     let label = match snapshot.edge_status {
         resolibre_audio::session::EdgeStatus::Pending => "Detecting track edges…",
-        resolibre_audio::session::EdgeStatus::Unavailable => "TRIM/FADE unavailable · Original audio",
+        resolibre_audio::session::EdgeStatus::Unavailable => {
+            "TRIM/FADE unavailable · Original audio"
+        }
         _ => label,
     };
     window.set_state_label(label.into());

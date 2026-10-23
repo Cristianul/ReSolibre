@@ -7,6 +7,7 @@ import { ActionButton } from "components/controls.slint";
 import { WindowHeader, WindowSurface } from "components/window-header.slint";
 
 export component AnalysisWindow inherits Window {
+    in property <bool> library-inspection;
     title: "ReSolibre · Track analysis";
     icon: Branding.logo;
     no-frame: true;
@@ -97,7 +98,7 @@ export component AnalysisWindow inherits Window {
         Text { text: root.interpretation; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
         HorizontalLayout {
             Rectangle { horizontal-stretch: 1; }
-            ActionButton { width: 200px; caption: root.running ? @tr("Cancel") : @tr("Analyze current track"); label: root.running ? @tr("Cancel track analysis") : @tr("Analyze current track"); show-icon: false; clicked => { if root.running { root.cancel-analysis(); } else { root.retry-analysis(); } } }
+            ActionButton { width: 200px; caption: root.running ? @tr("Cancel") : root.library-inspection ? @tr("Analyze this track") : @tr("Analyze current track"); label: root.running ? @tr("Cancel track analysis") : root.library-inspection ? @tr("Analyze this track") : @tr("Analyze current track"); show-icon: false; clicked => { if root.running { root.cancel-analysis(); } else { root.retry-analysis(); } } }
         }
     }
 }

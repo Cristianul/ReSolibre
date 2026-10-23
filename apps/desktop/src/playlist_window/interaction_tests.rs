@@ -40,6 +40,67 @@ fn pointer_click(window: &PlaylistWindow, point: slint::LogicalPosition) {
     pointer(window, point, "up");
 }
 
+/// Badge pointer/accessibility actions retain stable IDs without changing selection, playback or drag state.
+#[test]
+fn library_badge_opens_inspection_without_play_selection_or_drag() {
+    i_slint_backend_testing::init_no_event_loop();
+    let window = window();
+    window.set_selected_id("9007199254740993".into());
+    window.set_analysis_states(ModelRc::new(VecModel::from(
+        (0..3)
+            .map(|index| crate::AnalysisRow {
+                id: (9007199254740993_u64 + index).to_string().into(),
+                status: 3,
+            })
+            .collect::<Vec<_>>(),
+    )));
+    window.on_select_track(|_| panic!("badge must not start playback"));
+    window.on_reorder_track(|_, _, _| panic!("badge must not reorder"));
+    window.on_analyze_track(|_| panic!("badge opens a result, not forced batch analysis"));
+    let inspected = Rc::new(RefCell::new(Vec::new()));
+    let observed = inspected.clone();
+    window.on_view_track_analysis(move |id| observed.borrow_mut().push(id.to_string()));
+    let badge = ElementHandle::find_by_accessible_label(&window, "View analysis for Same.mp3")
+        .nth(1)
+        .unwrap();
+    let position = badge.absolute_position();
+    let point = slint::LogicalPosition::new(
+        position.x + badge.size().width / 2.0,
+        position.y + badge.size().height / 2.0,
+    );
+    pointer_click(&window, point);
+    assert_eq!(*inspected.borrow(), ["9007199254740994"]);
+    assert_eq!(window.get_selected_id(), "9007199254740993");
+    mock_elapsed_time(Duration::from_millis(80));
+    pointer_click(&window, point);
+    assert_eq!(
+        inspected.borrow().len(),
+        2,
+        "double clicking a badge never plays"
+    );
+    badge.invoke_accessible_default_action();
+    assert_eq!(inspected.borrow().len(), 3);
+    pointer(&window, point, "down");
+    pointer(
+        &window,
+        slint::LogicalPosition::new(point.x, point.y + 40.0),
+        "move",
+    );
+    pointer(&window, point, "up");
+    assert_eq!(inspected.borrow().len(), 3, "drag away cancels inspection");
+    window.set_closing(true);
+    pointer_click(&window, point);
+    badge.invoke_accessible_default_action();
+    assert_eq!(inspected.borrow().len(), 3);
+    window.set_closing(false);
+    let mut target = window.get_tracks().row_data(1).unwrap();
+    target.title = "Target.mp3".into();
+    window.set_tracks(ModelRc::new(VecModel::from(vec![target])));
+    window.set_search_query("Target".into());
+    click(&window, "View analysis for Target.mp3");
+    assert_eq!(inspected.borrow().last().unwrap(), "9007199254740994");
+}
+
 /// Single/double clicks, cancellation, stable-ID drop and contextual deletion share one view.
 #[test]
 fn selection_activation_drag_and_context_delete() {

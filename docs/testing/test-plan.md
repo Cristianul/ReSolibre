@@ -3,8 +3,8 @@
 ## Evidence and maintenance
 
 [Prototype](../architecture/features/local-playback.md): current evidence/limits.
-Planned acceptance follows [root rules](../../AGENTS.md): regressions, security
-and source preservation. Test isolated boundaries; report checks and gaps.
+Acceptance follows [root rules](../../AGENTS.md): regressions, security
+and source preservation. Test boundaries; report checks and gaps.
 
 Docs checks (Python 3.9+):
 
@@ -14,8 +14,7 @@ git diff --check
 git diff --cached --check
 ```
 
-Check UTF-8, links, placeholders, summary and profiles (32 KiB with guidance/maps).
-Update profiles.
+Check UTF-8, links, placeholders, summary and profiles (32 KiB including rules/maps).
 [Expanded acceptance](expanded-features-test-plan.md): new processing, playlists,
 analysis, writes and connected work; not unchanged prototype checks.
 

@@ -12,12 +12,12 @@ jobs or their grouped desktop window. Use `track-analysis` in `tools/check_docs.
 
 ## Current Behavior
 
-Analyze on artwork hover/focus opens a window with title, progress,
-Cancel/retry and time/frequency/power scales. Completed inspections retain one
-immutable report, title, facts and image across navigation/background completions;
-only explicit Analyze selects a replacement. Navigation before completion marks
-the unfinished view interrupted. Closing cancels its own request; the
-[persistent cache](analysis-cache.md) reuses completed measurements.
+The artwork chart button works after Stop too. It opens title,
+progress, Cancel/retry and plot scales. Completed views retain
+their report, facts and image across navigation; unfinished current-track views
+are interrupted. [Library badges](library-analysis.md) inspect their own occurrence
+without playback. Closing cancels only view work; the [cache](analysis-cache.md)
+reuses results. Idle sources open read-only in the analysis worker.
 
 A selectable BPM lane shares the time axis, with boundaries, local estimates
 and gray unknown gaps. Hover, click or keyboard selection
