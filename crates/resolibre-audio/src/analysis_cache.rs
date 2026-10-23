@@ -9,7 +9,6 @@ use resolibre_storage::{
 };
 use std::{
     fs::File,
-    os::fd::AsRawFd,
     path::PathBuf,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -81,7 +80,7 @@ impl CachedInput {
         if !unchanged(file, key, cancel) {
             return None;
         }
-        let input = File::open(format!("/proc/self/fd/{}", file.as_raw_fd())).ok()?;
+        let input = crate::platform::independent_file(file).ok()?;
         let identity = audio_identity::identify(input, cancel)?;
         if !unchanged(file, key, cancel) {
             return None;

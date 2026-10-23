@@ -1053,6 +1053,13 @@ fn scrub_gesture_does_not_seek_the_next_track() {
     wait_for_ui(&window, &controller, |w| {
         (w.get_position() - target).abs() < 1.0
     });
+    controller.borrow_mut().close();
+    let shutdown_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !controller.borrow().snapshot().finished {
+        controller.borrow_mut().refresh(&window);
+        assert!(std::time::Instant::now() < shutdown_deadline);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     assert_eq!(window.get_current(), 1);
     drop(controller);
     assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -1198,6 +1205,13 @@ fn scan_gesture_uses_pressed_generation_and_cancels_on_disable() {
         w.get_state_label().starts_with("Playing")
     });
     pointer(&window, point, "up");
+    controller.borrow_mut().close();
+    let shutdown_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !controller.borrow().snapshot().finished {
+        controller.borrow_mut().refresh(&window);
+        assert!(std::time::Instant::now() < shutdown_deadline);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     assert_eq!(window.get_current(), 1);
     drop(controller);
     window.hide().unwrap();

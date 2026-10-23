@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 /// Builds the owned native tap; its bytes travel with the adapter, never a plugin search path.
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        return;
+    }
     println!("cargo:rerun-if-changed=native/tap.c");
     println!("cargo:rerun-if-changed=native/ladspa/ladspa.h");
     let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo output directory"))

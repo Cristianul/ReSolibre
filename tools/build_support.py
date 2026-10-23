@@ -31,14 +31,13 @@ def positive_jobs(value):
 
 def require_supported_platform(system, machine):
     """Reject unported desktop platforms before invoking tools or creating build output."""
-    if system != "Linux":
+    if system not in ("Linux", "Windows"):
         label = "macOS" if system == "Darwin" else system
         raise BuildError(
-            f"{label} detected. The desktop player currently supports Linux x86_64 only; "
-            "Windows/macOS ports are separate work."
+            f"{label} detected. The desktop player supports Linux/Windows x86_64 only."
         )
     if machine.lower() not in ("x86_64", "amd64"):
-        raise BuildError(f"Linux {machine} detected; the audio adapter currently requires x86_64.")
+        raise BuildError(f"{system} {machine} detected; the audio adapter currently requires x86_64.")
 
 
 def require_tool(name, environment):
@@ -49,7 +48,7 @@ def require_tool(name, environment):
     return executable
 
 
-def native_target(environment):
+def native_target(environment, system="Linux"):
     """Read the installed compiler's host target, rejecting an incompatible toolchain."""
     compiler = require_tool(environment.get("RUSTC", "rustc"), environment)
     result = subprocess.run(
@@ -58,9 +57,11 @@ def native_target(environment):
     for line in result.stdout.splitlines():
         if line.startswith("host: "):
             target = line.removeprefix("host: ").strip()
-            if target.startswith("x86_64-") and "-linux-" in target:
+            if system == "Linux" and target.startswith("x86_64-") and "-linux-" in target:
                 return target
-            raise BuildError(f"The Rust host target {target} does not match the supported Linux host.")
+            if system == "Windows" and target == "x86_64-pc-windows-msvc":
+                return target
+            raise BuildError(f"The Rust host target {target} does not match the supported {system} host.")
     raise BuildError("rustc did not report its host target.")
 
 
@@ -75,9 +76,11 @@ def prepend_paths(environment, name, directories):
     environment[name] = os.pathsep.join(values)
 
 
-def build_environment(root, inherited):
+def build_environment(root, inherited, system="Linux"):
     """Use optional checkout-local Linux libraries without changing the parent shell or host."""
     environment = inherited.copy()
+    if system == "Windows":
+        return environment
     prefix = root / ".local/native/usr"
     libraries = [directory for directory in (prefix / "lib64", prefix / "lib") if directory.is_dir()]
     if not libraries:
@@ -121,6 +124,37 @@ def require_mpv(environment):
         )
 
 
+def windows_runtime(root, environment):
+    """Require an explicitly supplied local x64 runtime; never download or search music directories."""
+    directory = Path(environment.get("RESOLIBRE_NATIVE_DIR", root / ".local/native/windows"))
+    if not directory.is_absolute():
+        directory = root / directory
+    files = [directory / name for name in ("libmpv-2.dll", "ffmpeg.exe", "ffprobe.exe")]
+    for path in files:
+        if not path.is_file():
+            raise BuildError(f"Missing Windows runtime: {path.name}. See docs/development/local-builds.md.")
+        # Reject an incompatible architecture before the costly build, without executing native code.
+        with path.open("rb") as binary:
+            header = binary.read(64)
+            if len(header) != 64 or header[:2] != b"MZ":
+                raise BuildError(f"Invalid Windows runtime: {path.name}.")
+            offset = int.from_bytes(header[60:64], "little")
+            if offset > 1024 * 1024:
+                raise BuildError(f"Invalid Windows runtime: {path.name}.")
+            binary.seek(offset)
+            if binary.read(6) != b"PE\0\0\x64\x86":
+                raise BuildError(f"Windows runtime must be x86_64: {path.name}.")
+    return files
+
+
+def stage_windows_runtime(files, executable):
+    """Place required runtime files beside the built executable, so launch does not depend on PATH."""
+    for source in files:
+        destination = executable.parent / source.name
+        if source.resolve() != destination.resolve():
+            shutil.copy2(source, destination)
+
+
 def build_command(cargo, profile, target, offline, jobs):
     """Select the host explicitly so external Cargo target settings cannot cross-compile by accident."""
     command = [cargo, "build", "--locked", "--package", PACKAGE, "--bin", PACKAGE, "--target", target]
@@ -141,7 +175,8 @@ def executable_path(cargo, target, profile, environment):
         directory = Path(json.loads(result.stdout)["target_directory"])
     except (ValueError, KeyError, TypeError):
         raise BuildError("Cargo did not report a valid target directory.") from None
-    executable = directory / target / profile / PACKAGE
+    name = PACKAGE + (".exe" if target.endswith("-windows-msvc") else "")
+    executable = directory / target / profile / name
     if not executable.is_file():
         raise BuildError("Cargo finished but the expected desktop executable is missing.")
     return executable
@@ -156,15 +191,21 @@ def main(profile, arguments=None):
     options = parser.parse_args(arguments)
 
     try:
-        require_supported_platform(platform.system(), platform.machine())
-        environment = build_environment(ROOT, os.environ)
+        system = platform.system()
+        require_supported_platform(system, platform.machine())
+        environment = build_environment(ROOT, os.environ, system)
         cargo = require_tool("cargo", environment)
-        target = native_target(environment)
-        require_mpv(environment)
+        target = native_target(environment, system)
+        runtime = []
+        if system == "Windows":
+            runtime = windows_runtime(ROOT, environment)
+        else:
+            require_mpv(environment)
         command = build_command(cargo, profile, target, options.offline, options.jobs)
-        print(f"Building ReSolibre: Linux / {target} / {profile}", flush=True)
+        print(f"Building ReSolibre: {system} / {target} / {profile}", flush=True)
         subprocess.run(command, cwd=ROOT, env=environment, check=True)
         executable = executable_path(cargo, target, profile, environment)
+        stage_windows_runtime(runtime, executable)
         print(f"Built: {executable}", flush=True)
         if options.run:
             return subprocess.run([str(executable)], cwd=ROOT, env=environment, check=False).returncode

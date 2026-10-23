@@ -632,6 +632,13 @@ fn retry_button_replaces_completed_report() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert_eq!(std::fs::read(&next_path).unwrap(), original);
+    controller.borrow_mut().close();
+    let shutdown_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !controller.borrow().snapshot().finished {
+        controller.borrow_mut().refresh(&main);
+        assert!(std::time::Instant::now() < shutdown_deadline);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     host.borrow_mut().close();
     drop(host);
     drop(controller);

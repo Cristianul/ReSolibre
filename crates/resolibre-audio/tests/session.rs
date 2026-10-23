@@ -1997,9 +1997,122 @@ fn current_track_rhythm_and_plot_preempt_library_work() {
 /// Natural playback must enter an overlap before EOF, without a seek command priming either stream.
 #[test]
 fn mix_starts_during_natural_playback_without_seeking() {
+    assert_natural_mix(AudioOutput::Silent);
+}
+
+/// Uses the actual Windows output clock with muted synthetic media; requires an available device.
+#[cfg(windows)]
+#[test]
+#[ignore = "requires a Windows audio device; generated sources remain muted"]
+fn windows_device_mix_starts_during_natural_playback() {
+    assert_natural_mix(AudioOutput::Device);
+}
+
+/// Exercises compressed stereo, profile caching and initial TRIM on an actual Windows output.
+#[cfg(windows)]
+#[test]
+#[ignore = "requires bundled ffmpeg and a Windows audio device; generated sources remain muted"]
+fn windows_compressed_trim_and_mix_prepare() {
+    use resolibre_audio::session::{EdgeStatus, MixStatus};
+    use std::os::windows::process::CommandExt;
+    let mut fixtures = [Fixture::rhythmic(120.0), Fixture::rhythmic(124.0)];
+    let helper = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("ffmpeg.exe");
+    for fixture in &mut fixtures {
+        let encoded = fixture.directory.join("stereo.mp3");
+        let status = std::process::Command::new(&helper)
+            .creation_flags(0x0800_0000)
+            .args(["-nostdin", "-v", "error", "-stream_loop", "-1", "-i"])
+            .arg(&fixture.path)
+            .args([
+                "-t",
+                "180",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
+                "-c:a",
+                "libmp3lame",
+            ])
+            .arg(&encoded)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        fixture.path = encoded;
+        fixture.bytes = fs::read(&fixture.path).unwrap();
+    }
+    let session = Session::start_with_analysis_cache(
+        AudioOutput::Device,
+        Some(fixtures[0].directory.join("cache")),
+    )
+    .unwrap();
+    session
+        .submit(Command::Volume(Volume::from_percent(0.0).unwrap()))
+        .unwrap();
+    session
+        .submit(Command::Edges(
+            resolibre_core::playback_edges::EdgeAction::ToggleTrim,
+        ))
+        .unwrap();
+    session.submit(Command::SetMix(true)).unwrap();
+    session
+        .submit(Command::Open(
+            fixtures.iter().map(|item| item.path.clone()).collect(),
+        ))
+        .unwrap();
+    let started = Instant::now();
+    let mut seeked = false;
+    let mut previous = None;
+    let mut prepared = false;
+    while started.elapsed() < Duration::from_secs(35) {
+        let snapshot = session.snapshot();
+        let state = (snapshot.state, snapshot.edge_status, snapshot.mix_status);
+        if previous != Some(state) {
+            eprintln!(
+                "compressed journey {:?}: {:?}, pos={:?}",
+                started.elapsed(),
+                state,
+                snapshot.position
+            );
+            previous = Some(state);
+        }
+        if !seeked
+            && snapshot.state == SessionState::Playing
+            && snapshot.edge_status == EdgeStatus::Ready
+        {
+            session
+                .submit(Command::Seek {
+                    generation: snapshot.generation,
+                    seconds: 130.0,
+                })
+                .unwrap();
+            seeked = true;
+        }
+        if matches!(
+            snapshot.mix_status,
+            MixStatus::Ready | MixStatus::ReadyCrossfade
+        ) {
+            prepared = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    close(session);
+    assert!(seeked, "initial stereo TRIM must finish and start playback");
+    assert!(prepared, "compressed MIX must prepare before overlap");
+}
+
+/// Checks preparation and adoption against the selected output, without seeking or audible test tones.
+fn assert_natural_mix(output: AudioOutput) {
     use resolibre_audio::session::MixStatus;
     let fixtures = [Fixture::rhythmic(120.0), Fixture::rhythmic(124.0)];
-    let session = Session::start(AudioOutput::Silent).unwrap();
+    let session = Session::start(output).unwrap();
+    session
+        .submit(Command::Volume(Volume::from_percent(0.0).unwrap()))
+        .unwrap();
     session
         .submit(Command::Edges(
             resolibre_core::playback_edges::EdgeAction::ToggleTrim,
@@ -2356,5 +2469,136 @@ fn mix_off_while_paused_before_overlap_restores_tempo() {
         "tempo after MIX-off: {moved} in {elapsed}"
     );
     assert_eq!(resumed.current, Some(0));
+    close(session);
+}
+
+/// Rapid seeks across a prepared overlap must settle at the last target and resume clock updates.
+#[test]
+fn repeated_live_scrubbing_keeps_position_and_controls_advancing() {
+    let fixtures = [Fixture::rhythmic(120.0), Fixture::rhythmic(142.0)];
+    assert_repeated_live_scrubbing(AudioOutput::Silent, fixtures);
+}
+
+/// Exercises the Windows output clock with owned media and zero application volume.
+#[cfg(target_os = "windows")]
+#[test]
+#[ignore = "requires a Windows audio device; generated media remains muted"]
+fn windows_device_repeated_live_scrubbing_keeps_position_advancing() {
+    let fixtures = [Fixture::rhythmic(120.0), Fixture::rhythmic(142.0)];
+    assert_repeated_live_scrubbing(AudioOutput::Device, fixtures);
+    for (extension, rate) in [("flac", "192000"), ("mp3", "48000")] {
+        let fixtures = encoded_scrub_fixtures(extension, rate);
+        assert_repeated_live_scrubbing(AudioOutput::Device, fixtures);
+    }
+}
+
+/// Encodes owned rhythmic WAVs into stereo codec fixtures using only the bundled helper.
+#[cfg(target_os = "windows")]
+fn encoded_scrub_fixtures(extension: &str, rate: &str) -> [Fixture; 2] {
+    use std::os::windows::process::CommandExt;
+
+    let helper = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("ffmpeg.exe");
+    let mut fixtures = [Fixture::rhythmic(120.0), Fixture::rhythmic(142.0)];
+    for fixture in &mut fixtures {
+        let encoded = fixture.directory.join(format!("stereo.{extension}"));
+        let status = std::process::Command::new(&helper)
+            .creation_flags(0x0800_0000)
+            .args(["-nostdin", "-v", "error", "-i"])
+            .arg(&fixture.path)
+            .args(["-ar", rate, "-ac", "2"])
+            .arg(&encoded)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        fixture.path = encoded;
+        fixture.bytes = fs::read(&fixture.path).unwrap();
+    }
+    fixtures
+}
+
+/// Floods/coalesces seeks, then verifies native target completion, resume, pause and cleanup.
+fn assert_repeated_live_scrubbing(output: AudioOutput, fixtures: [Fixture; 2]) {
+    use resolibre_audio::session::MixStatus;
+    use resolibre_core::playback_edges::EdgeAction;
+
+    let session = Session::start(output).unwrap();
+    session
+        .submit(Command::Volume(Volume::from_percent(0.0).unwrap()))
+        .unwrap();
+    session
+        .submit(Command::Edges(EdgeAction::ToggleTrim))
+        .unwrap();
+    session
+        .submit(Command::Edges(EdgeAction::CycleFade))
+        .unwrap();
+    session.submit(Command::SetMix(true)).unwrap();
+    let revision = session
+        .submit(Command::Open(
+            fixtures
+                .iter()
+                .map(|fixture| fixture.path.clone())
+                .collect(),
+        ))
+        .unwrap();
+    let ready = wait(&session, revision, |snapshot| {
+        snapshot.mix_status == MixStatus::Ready
+    });
+    let overlap = ready.mix_region.unwrap();
+
+    for round in 0..4 {
+        for step in 0..80 {
+            let seconds = match step % 4 {
+                0 => overlap.start + 0.2,
+                1 => 2.0,
+                2 => overlap.start - 0.3,
+                _ => 5.0,
+            };
+            session
+                .submit(Command::Seek {
+                    generation: ready.generation,
+                    seconds,
+                })
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(4));
+        }
+
+        let revision = session.submit(Command::TogglePause).unwrap();
+        wait(&session, revision, |snapshot| {
+            snapshot.state == SessionState::Paused
+        });
+        let target = 2.0 + round as f64 * 0.25;
+        let revision = session
+            .submit(Command::Seek {
+                generation: ready.generation,
+                seconds: target,
+            })
+            .unwrap();
+        let settled = wait(&session, revision, |snapshot| {
+            snapshot
+                .position
+                .is_some_and(|position| (position - target).abs() < 0.15)
+        });
+        assert_eq!(settled.current, Some(0));
+        assert_eq!(settled.generation, ready.generation);
+        assert!(settled.error.is_none());
+
+        let revision = session.submit(Command::TogglePause).unwrap();
+        let resumed = wait(&session, revision, |snapshot| {
+            snapshot.state == SessionState::Playing && snapshot.position.is_some()
+        });
+        let initial_position = resumed.position.unwrap();
+        let advanced = wait(&session, revision, |snapshot| {
+            snapshot
+                .position
+                .is_some_and(|position| position > initial_position + 0.3)
+        });
+        assert_eq!(advanced.current, Some(0));
+        assert!(advanced.error.is_none());
+    }
+
     close(session);
 }

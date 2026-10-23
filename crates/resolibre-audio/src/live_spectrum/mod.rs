@@ -1,5 +1,9 @@
 //! Optional source-PCM observation. Native loading/clock access stays here; core owns analysis policy.
 
+#[cfg(unix)]
+mod native;
+#[cfg(windows)]
+#[path = "windows.rs"]
 mod native;
 
 use crate::LocalPlayer;

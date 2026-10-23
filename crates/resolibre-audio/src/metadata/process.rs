@@ -2,8 +2,6 @@
 
 use std::fs::File;
 use std::io::{ErrorKind, Read, Seek};
-use std::os::fd::OwnedFd;
-use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -63,7 +61,7 @@ pub(super) fn cover(
 
 /// Shares safe probing limits and protocol/demuxer restrictions across both executables.
 fn command(program: &str) -> Command {
-    let mut command = Command::new(program);
+    let mut command = crate::platform::helper(program);
     command.env_remove("FFREPORT").args([
         "-hide_banner",
         "-loglevel",
@@ -97,7 +95,7 @@ fn run(
     if cancel.load(Ordering::Relaxed) || started.elapsed() >= DEADLINE {
         return Err(());
     }
-    let (mut reader, writer) = UnixStream::pair().map_err(|_| ())?;
+    let (mut reader, writer) = crate::platform::output_pipe().map_err(|_| ())?;
     reader
         .set_read_timeout(Some(Duration::from_millis(20)))
         .map_err(|_| ())?;
@@ -106,7 +104,7 @@ fn run(
     let mut helper = Helper(
         command
             .stdin(Stdio::from(input))
-            .stdout(Stdio::from(OwnedFd::from(writer)))
+            .stdout(writer)
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| ())?,

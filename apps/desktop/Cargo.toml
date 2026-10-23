@@ -13,6 +13,9 @@ rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal",
 raw-window-handle = "=0.6.2"
 x11rb = { version = "=0.13.2", default-features = false }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
+
 [build-dependencies]
 slint-build = { version = "=1.18.1", default-features = false, features = ["compat-1-18"] }
 

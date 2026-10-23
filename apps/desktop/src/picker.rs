@@ -1,19 +1,18 @@
 //! A disposable native dialog process keeps picker waits out of the UI/audio threads.
 //! Raw path bytes travel over a private inherited socket, never logs or shell text.
 
-use resolibre_audio::session::{MAX_SELECTION_BYTES, validate_selection};
+use crate::path_encoding;
+use resolibre_audio::platform::PipeReader;
+use resolibre_audio::session::validate_selection;
 use resolibre_core::queue::MAX_QUEUE_ITEMS;
-use std::ffi::OsString;
 use std::io::{Read, Write};
-use std::os::fd::OwnedFd;
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::net::UnixStream;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const MAX_WIRE_BYTES: usize = MAX_SELECTION_BYTES + 4 * (MAX_QUEUE_ITEMS + 1);
+const MAX_WIRE_BYTES: usize = path_encoding::MAX_SELECTION_BYTES + 4 * (MAX_QUEUE_ITEMS + 1);
 
 #[derive(Clone, Copy)]
 pub enum Kind {
@@ -40,6 +39,7 @@ impl Kind {
     }
 }
 
+#[cfg(unix)]
 unsafe extern "C" {
     /// Signals the owned picker process group; negative pid addresses that group.
     fn kill(pid: i32, signal: i32) -> i32;
@@ -48,7 +48,7 @@ unsafe extern "C" {
 /// Owns one native chooser and its bounded result buffer; no detached picker thread.
 pub struct Picker {
     child: Child,
-    socket: UnixStream,
+    socket: PipeReader,
     bytes: Vec<u8>,
     started: Instant,
     pub append: bool,
@@ -63,18 +63,25 @@ impl Picker {
 
     /// Reuses the owned, cancellable helper for music and single-preset transfers.
     pub fn start_for(kind: Kind, append: bool) -> Result<Self, &'static str> {
-        let (socket, output) =
-            UnixStream::pair().map_err(|_| "Cannot create file chooser channel")?;
+        let (mut socket, output) = resolibre_audio::platform::output_pipe()
+            .map_err(|_| "Cannot create file chooser channel")?;
         socket
             .set_nonblocking(true)
             .map_err(|_| "Cannot configure file chooser channel")?;
         let executable = helper_executable()?;
-        let child = Command::new(executable)
+        let mut command = Command::new(executable);
+        #[cfg(unix)]
+        command.process_group(0);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        let child = command
             .arg(kind.argument())
             .stdin(Stdio::null())
-            .stdout(Stdio::from(OwnedFd::from(output)))
+            .stdout(output)
             .stderr(Stdio::null())
-            .process_group(0)
             .spawn()
             .map_err(|_| "Cannot start file chooser")?;
         Ok(Self {
@@ -125,6 +132,7 @@ impl Drop for Picker {
     /// Cancels/reaps the owned helper and any fallback chooser in its process group.
     fn drop(&mut self) {
         if !self.reaped {
+            #[cfg(unix)]
             if let Ok(pid) = i32::try_from(self.child.id()) {
                 // SAFETY: this is our unreaped child's group established at spawn.
                 // It cannot be reused while the direct child remains unreaped.
@@ -132,6 +140,8 @@ impl Drop for Picker {
                     kill(-pid, 9);
                 }
             }
+            #[cfg(windows)]
+            let _ = self.child.kill();
             let _ = self.child.wait();
         }
     }
@@ -181,12 +191,12 @@ pub fn run_helper(kind: Kind) -> Result<(), &'static str> {
     }
     let mut output = std::io::stdout().lock();
     for path in files {
-        let bytes = path.as_os_str().as_bytes();
+        let bytes = path_encoding::encode(path.as_os_str());
         output
             .write_all(&(bytes.len() as u32).to_le_bytes())
             .map_err(|_| "Picker output failed")?;
         output
-            .write_all(bytes)
+            .write_all(&bytes)
             .map_err(|_| "Picker output failed")?;
     }
     output
@@ -211,13 +221,14 @@ fn decode(bytes: &[u8]) -> Result<Vec<PathBuf>, &'static str> {
             }
             break;
         }
-        if length > 4096 || rest.len() < length || paths.len() >= MAX_QUEUE_ITEMS {
+        if length > path_encoding::MAX_PATH_BYTES
+            || rest.len() < length
+            || paths.len() >= MAX_QUEUE_ITEMS
+        {
             return Err("Invalid file selection");
         }
-        if rest[..length].contains(&0) {
-            return Err("Invalid local file path");
-        }
-        paths.push(PathBuf::from(OsString::from_vec(rest[..length].to_vec())));
+        let path = path_encoding::decode(&rest[..length]).ok_or("Invalid local file path")?;
+        paths.push(PathBuf::from(path));
         rest = &rest[length..];
     }
     if !paths.is_empty() {
@@ -242,11 +253,15 @@ mod tests {
         ] {
             assert!(decode(bytes).is_err());
         }
-        let bytes = [2, 0, 0, 0, b'a', 0xff, 0, 0, 0, 0];
-        assert_eq!(
-            decode(&bytes).unwrap()[0].as_os_str().as_bytes(),
-            &[b'a', 0xff]
-        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let bytes = [2, 0, 0, 0, b'a', 0xff, 0, 0, 0, 0];
+            assert_eq!(
+                decode(&bytes).unwrap()[0].as_os_str().as_bytes(),
+                &[b'a', 0xff]
+            );
+        }
     }
 
     /// Re-executes a running test image after unlink/replacement, without opening a real dialog.
@@ -271,7 +286,8 @@ mod tests {
         }
 
         use std::os::unix::fs::DirBuilderExt;
-        let directory = std::env::temp_dir().join(format!("resolibre-picker-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("resolibre-picker-{}", std::process::id()));
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&directory)

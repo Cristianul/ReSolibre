@@ -43,7 +43,7 @@ impl LocalPlayer {
     }
 
     /// Prepares a persistent stretcher with the native real-time startup padding removed.
-    fn prepare_mix_tempo(&mut self) -> Result<(), PlaybackError> {
+    pub(crate) fn prepare_mix_tempo(&mut self) -> Result<(), PlaybackError> {
         if !self.mix_tempo_filter {
             self.playback_command(&["af", "add", MIX_TEMPO_FILTER], "mix tempo setup")?;
             self.mix_tempo_filter = true;

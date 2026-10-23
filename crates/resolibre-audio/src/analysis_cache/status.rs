@@ -4,8 +4,6 @@ use super::{CacheConfig, unchanged};
 use crate::original_audio::SourceKey;
 use resolibre_storage::{AnalysisCache, audio_identity};
 use std::{
-    fs::File,
-    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -101,11 +99,7 @@ fn cached_track(
     config: &CacheConfig,
     cancel: &AtomicBool,
 ) -> bool {
-    let Ok(file) = File::options()
-        .read(true)
-        .custom_flags(crate::OPEN_NONBLOCK | 0o400000)
-        .open(path)
-    else {
+    let Ok(file) = crate::platform::open_media(path, false) else {
         return false;
     };
     let Ok(key) = SourceKey::read(&file, 0) else {
@@ -144,9 +138,10 @@ fn cached_track(
     complete && unchanged(&file, key, cancel)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::fs::File;
 
     /// Cached badges recheck file facts/access; links, replacements and cancelled reads cannot reuse a hint.
     #[test]

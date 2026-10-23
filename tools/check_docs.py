@@ -61,6 +61,9 @@ READING_FLOWS = {
     "local-builds": CORE_CONTEXT + DESKTOP_CONTEXT + VERIFICATION + (
         "docs/development/local-builds.md",
     ),
+    "windows-native": CORE_CONTEXT + DESKTOP_CONTEXT + VERIFICATION + (
+        "docs/development/windows-native.md",
+    ),
     "native-environment": CORE_CONTEXT + VERIFICATION + (
         "docs/development/native-environment.md",
         TARGET + "delivery-and-licensing.md",

@@ -1,15 +1,24 @@
 //! Allowlisted reset of application-owned data; never follows links or reads music locations.
 
+#[cfg(unix)]
 use std::fs::{self, File, OpenOptions};
+#[cfg(unix)]
 use std::os::{
     fd::AsRawFd,
     unix::fs::{MetadataExt, OpenOptionsExt},
 };
+#[cfg(unix)]
 use std::path::{Path, PathBuf};
+
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub use windows::clear;
 
 const INVALID: &str = "Unexpected file in application data; reset cancelled";
 
 /// Pins a real directory descriptor so later parent-path replacement cannot redirect deletion.
+#[cfg(unix)]
 fn directory(path: &Path) -> Result<File, &'static str> {
     OpenOptions::new()
         .read(true)
@@ -19,12 +28,14 @@ fn directory(path: &Path) -> Result<File, &'static str> {
 }
 
 /// Refers only to a retained application directory; entry names come from its bounded enumeration.
+#[cfg(unix)]
 fn anchored(file: &File) -> PathBuf {
     PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()))
 }
 
 /// Validates all known data before deleting any; retained empty directories and lock files carry no settings.
 /// The caller must hold exclusive profile access and stop every application worker first.
+#[cfg(unix)]
 pub fn clear(path: &Path) -> Result<(), &'static str> {
     let root = directory(path)?;
     let mut directories = vec![root];
@@ -53,6 +64,7 @@ pub fn clear(path: &Path) -> Result<(), &'static str> {
 }
 
 /// Restricts deletion to the current storage formats; unknown content, links and excessive entries fail closed.
+#[cfg(unix)]
 fn collect(directory: &File, kind: &str, files: &mut Vec<PathBuf>) -> Result<(), &'static str> {
     for (index, item) in fs::read_dir(anchored(directory))
         .map_err(|_| INVALID)?

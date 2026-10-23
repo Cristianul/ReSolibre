@@ -12,7 +12,7 @@ For EQ use [its feature](local-equalizer.md); catalog/SMB use the
 
 ## Current Behavior
 
-Linux x86_64: Slint 1.18.1/FemtoVG and libmpv. Open appends/plays the first addition;
+Linux/Windows x86_64: Slint 1.18.1/FemtoVG and libmpv. Open appends/plays the first addition;
 cancel preserves playback. Duplicates have distinct IDs.
 Navigation/EOF use [queue modes](queue-playback-order.md); [hold scans](transport-scan.md) run at 3×.
 Failures retain selection for retry/navigation. Stop releases the engine; Play

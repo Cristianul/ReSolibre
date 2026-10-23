@@ -51,13 +51,17 @@ selection/gain/EQ. Existing preset, queue, scrub/EOF and UI tests remain regress
 ## Edge Cases
 
 Storage: `$XDG_CONFIG_HOME/resolibre` for absolute XDG roots, otherwise
-`$HOME/.config/resolibre`. `session-v1.bin` holds v4 (v1–v3: MIX off; v1/v2: Green, panels visible; v1: processing off) and
+`$HOME/.config/resolibre`. Windows uses `%LOCALAPPDATA%\ReSolibre`, inherited user
+ACLs, a distinct session header and UTF-16 paths; Unix sessions are not imported.
+Windows wire bounds allow twice the native encoded path bytes.
+`session-v1.bin` holds v4 (v1–v3: MIX off; v1/v2: Green, panels visible; v1: processing off) and
 length-prefixed raw paths, separately from portable named EQ presets.
 Bounds: 1024 occurrences, 4096 bytes/path, 1 MiB total paths, 1,052,805-byte file.
 Decode rejects paths with NULs/relative roots, invalid selections/modes, nonfinite/out-of-range
 gains, unknown fields/versions and trailing bytes before accepting any state.
 
-Private transactions use mode 0600, atomic rename, file and directory sync.
+Unix transactions use mode 0600, atomic rename, file and directory sync.
+Windows flushes file data and uses write-through replacement; see [native setup](../../development/windows-native.md).
 App directories are created with mode 0700. No music-file writes or network I/O.
 A held `session.lock` lease prevents two live instances from overwriting each
 other's session; another window works without restoring/saving and shows a warning.

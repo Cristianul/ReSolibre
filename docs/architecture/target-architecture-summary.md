@@ -2,12 +2,11 @@
 
 ## Product and priorities
 
-A personal, free/open-source player under GPL-3.0-only. Commercial success and
-monetization are not requirements. Offline-first: no mandatory ReSolibre account,
-cloud, companion server, telemetry or external requests for local use. Individual
-sources may need credentials. Users retain their music and playlist ownership.
+A personal GPL-3.0-only player; monetization is not required. Local use needs no
+ReSolibre account, cloud, companion server, telemetry or external requests.
+Sources may need credentials. Users own their music and playlists.
 
-Linux first (Fedora, Debian, Ubuntu), then Windows. Android follows; macOS/iOS
+Linux first (Fedora, Debian, Ubuntu), with a native Windows x64 prototype. Android follows; macOS/iOS
 where feasible and an offline-capable web client are later targets. Source order
 is local features/library first, then Jellyfin, SMB and Navidrome. Spotify/YouTube
 Music are exploratory only, subject to authorized APIs and terms.

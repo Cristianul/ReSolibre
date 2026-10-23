@@ -1,15 +1,14 @@
 //! Filesystem adapter for small portable presets; no names become filesystem paths.
 
 use super::{Completion, Entry, MAX_PRESETS, legacy};
+use crate::profile_files;
 use crate::profile_storage;
 use resolibre_core::equalizer::preset::{MAX_BYTES, Preset};
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 const EXTENSION: &str = "resolibre-eq";
-const NO_FOLLOW_NONBLOCK: i32 = 0x20000 | 0x800;
 
 /// Validates the profile root before entering its private catalog and serializes writers.
 pub(super) fn load(directory: &Path) -> Result<Completion, &'static str> {
@@ -128,16 +127,11 @@ pub(super) fn save(
 
 /// Bounds imported bytes and rejects symlinks, FIFOs, devices and malformed numeric settings.
 pub(super) fn read_preset(path: &Path) -> Result<Preset, &'static str> {
-    let file = OpenOptions::new()
+    let file = profile_files::options()
         .read(true)
-        .custom_flags(NO_FOLLOW_NONBLOCK)
         .open(path)
         .map_err(|_| "Cannot open EQ preset")?;
-    if !file
-        .metadata()
-        .map_err(|_| "Cannot inspect EQ preset")?
-        .is_file()
-    {
+    if !profile_files::regular(&file).map_err(|_| "Cannot inspect EQ preset")? {
         return Err("EQ preset must be a regular file");
     }
     let mut bytes = Vec::new();
@@ -156,11 +150,9 @@ pub(super) fn export(path: &Path, preset: &Preset) -> Result<(), &'static str> {
     if path.extension().is_none_or(|value| value != EXTENSION) {
         return Err("Use the .resolibre-eq extension for exported presets");
     }
-    let mut file = OpenOptions::new()
+    let mut file = profile_files::options()
         .write(true)
         .create_new(true)
-        .mode(0o600)
-        .custom_flags(NO_FOLLOW_NONBLOCK)
         .open(&path)
         .map_err(|_| "Cannot create export; choose a new filename")?;
     // Only a file created by this operation can be cleaned up on failure.
@@ -170,12 +162,11 @@ pub(super) fn export(path: &Path, preset: &Preset) -> Result<(), &'static str> {
         file.sync_all()
             .map_err(|_| "Cannot flush exported preset")?;
         if let Some(parent) = path.parent() {
-            File::open(parent)
-                .and_then(|file| file.sync_all())
-                .map_err(|_| "Cannot flush export folder")?;
+            profile_files::sync_directory(parent).map_err(|_| "Cannot flush export folder")?;
         }
         Ok(())
     })();
+    drop(file);
     if result.is_err() {
         let _ = fs::remove_file(&path);
     }

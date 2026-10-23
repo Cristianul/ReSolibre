@@ -1,15 +1,10 @@
 # Current architecture
 
-Rust: portable domain (`resolibre-core`), analysis cache (`resolibre-storage`), Linux
-libmpv/session (`resolibre-audio`), Slint (`resolibre-desktop`). Core has no GUI/native
-dependencies; CLI plays local audio.
+Rust workspace: portable core, local SQLite cache, libmpv/session adapter, Slint UI.
+Core excludes GUI/native dependencies. Each worker owns its read-only file/engine.
+Local transport, queue, EQ/presets and restoration work; restore never autoplays.
+Catalog, named playlists and SMB remain planned. Native cleanup has no hard deadline;
+device latency is unproven.
 
-Desktop: import, transport/seek/gain, queue, Shuffle/Repeat and
-[EQ/presets](features/local-equalizer.md). [Restoration](features/session-persistence.md)
-never autoplays. One worker owns each read-only descriptor/engine.
-Catalog, named playlists and SMB remain planned.
-
-[Core map](core-project-map.md), [desktop map](desktop-project-map.md),
-[adapter](features/local-playback.md), [desktop](features/local-desktop-player.md).
-[Validation](../testing/local-desktop-validation.md): monitor evidence excludes
-DAC latency; native cleanup has no hard cancellation bound.
+[Playback](features/local-playback.md), [UI](features/local-desktop-player.md),
+[Windows x64](../development/windows-native.md); Live Spectrum is Linux-only.

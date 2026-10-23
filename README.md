@@ -3,11 +3,11 @@
 A personal music player for people who want their own music, a responsive
 interface and control over how it sounds.
 
-**Status: Linux local desktop prototype with transport, seek, app volume, separate queue, Shuffle/Repeat and ten-band EQ with presets and session restoration.**
+**Status: Linux and Windows local desktop prototype with transport, seek, app volume, separate queue, Shuffle/Repeat and ten-band EQ with presets and session restoration.**
 
 ## Product direction
 
-- Linux first: Fedora, Debian and Ubuntu; Windows follows.
+- Linux first: Fedora, Debian and Ubuntu; native Windows x64 builds are available as a prototype.
 - Local player features/library first; then Jellyfin, SMB and Navidrome.
 - Compact Winamp-inspired and modern library layouts sharing one playback
   session, queue and equalizer.
@@ -53,6 +53,9 @@ python3 build_release.py
 ```
 
 Add `--run` to launch after building. See [local build options and OS support](docs/development/local-builds.md).
+
+Windows: `./build_windows.ps1 -Profile Release -Run`.
+See [Windows prerequisites and known limits](docs/development/windows-native.md).
 
 ## Contributing
 

@@ -88,8 +88,9 @@ implements bounded typed commands and one native owner; see the
 
 ## Future platforms
 
-- Windows reuses shared native playback where feasible; isolate only required
-  output, credential and OS integration differences. Evaluate macOS later.
+- Windows now reuses shared native playback in the [x64 prototype](../../development/windows-native.md);
+  retained-file, pipe, profile and window differences live in native adapters.
+  Credentials and release qualification remain future work. Evaluate macOS later.
 - Android/iOS need audio-session, interruption, background-playback and storage
   integration; a shared core does not remove these requirements.
 - Web reuses portable behavior through WebAssembly where practical. Its

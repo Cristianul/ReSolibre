@@ -41,20 +41,19 @@ Prefer equal BPM within ±20% on both streams. Otherwise choose among 1:2, 1:3,
 2:3 and inverses, minimizing the largest rate adjustment. Complete shared cycles
 align; source BPM stays unchanged. Speed is never clamped to an off-grid limit.
 Ratio overlaps round down to whole cycles; both sides still need nine observations.
-Native clocks use the same ratio throughout the ramp. Missing phase permits TEMPO,
-not verified cycle alignment. Unsupported ratios retain crossfade.
+Nominal rates preserve the shared ratio. Missing phase permits TEMPO;
+unsupported ratios retain crossfade.
 Pitch correction uses libmpv's Rubber Band R3 with separate stereo channels and
 48 kHz internal MIX processing. Source files and normal playback are unchanged.
 Startup padding/output trimming preserves the first samples; a persistent 1 ppm
 pitch guard (<0.002 cents) prevents a phase reset at exact 1× speed.
 The graph survives handover/unity and is removed during paused scan reconstruction.
-The outgoing track approaches the geometric BPM midpoint over up to six source
-seconds before overlap; the muted incoming track is prepared at that midpoint.
-This splits the proportional adjustment: 120→142 BPM meets at 130.54 BPM
-(+8.78%/-8.07%). Matching limits and ratio selection remain unchanged.
+Both tracks reach the geometric BPM midpoint before audible overlap. The outgoing
+six-source-second approach ends one second early for buffered audio to settle;
+the incoming stream starts muted at that midpoint (120→142 meets at 130.54 BPM).
 Both speeds share a six-second smooth return starting about one second before handover.
 The incoming stream continues afterward; handover never resets speed.
-`TEMPO_MEET_DURATION_SECONDS` in `transition.rs` tunes the opening approach.
+`TEMPO_MEET_DURATION_SECONDS`/`TEMPO_MEET_SETTLE_SECONDS` tune approach/settling.
 `TEMPO_RETURN_LEAD_SECONDS` and `TEMPO_RETURN_DURATION_SECONDS` in
 `transition/tempo_return.rs` tune lead and total playing time. Short overlaps cap
 the lead at half their span. Source-clock integration freezes on pause/buffering;
@@ -71,13 +70,13 @@ with 50 ms sound padding. Quiet or beat-free edges share the same 16-second/10%
 cut budget. A prefix cannot authorize a longer track's tail cut; silence or isolated
 clicks alone supply no activity bounds. No additional decode job is needed.
 
-The session opens one muted, paused libmpv handle 22 seconds before the earliest
-overlap/cut, allowing the 15-second readiness deadline and six-second approach.
-Available muted lead-in, capped at 300 ms, allows startup/phase correction before
-audible gain rises. Both streams prefer the outgoing native audio clock. If that
-optional clock is absent or invalid, playback time still drives overlap/handover;
-missing audio timestamps cannot produce a SYNC claim. One early bounded phase
-correction centers errors above 5 ms; SYNC requires measured error <=30 ms.
+One muted, paused libmpv handle opens 23 seconds before the earliest overlap/cut.
+Available lead-in is capped at 300 ms. Up to three seeks correct startup latency
+while incoming gain stays zero and outgoing gain stays full. Alignment has one
+second after overlap start, capped before handover; failure preserves current playback.
+Verified alignment releases complementary gains over 150 ms; 2% speed feedback
+centers drift within the 20% limit. Seeking/settling clocks cannot verify SYNC;
+error must be <=30 ms. Missing audio clocks retain playback-time TEMPO fallback.
 Complementary linear gains bound correlated mix peaks;
 application volume and EQ remain shared intent. Boundary FADE is suppressed during
 overlap and restored when ordinary playback resumes.
@@ -96,7 +95,7 @@ Handover advances the queue once and adopts the running stream without replaying
 
 - `crates/resolibre-core/src/analysis/activity.rs`: bounded original-audio sound edges.
 - `crates/resolibre-core/src/transition{.rs,/ratio.rs,/tempo_return.rs}`: policy and tuning.
-- `crates/resolibre-audio/src/session/worker/mixing.rs`: native lifecycle and handover.
+- `crates/resolibre-audio/src/session/worker/mixing{.rs,/phase.rs}`: clocks and handover.
 - `crates/resolibre-audio/src/controls.rs`: scoped native tempo filter and speed.
 - `crates/resolibre-audio/src/session/rhythm.rs`, `rhythm_analysis.rs`: gated lookahead.
 - `apps/desktop/src/playback_edges.rs`, `ui/player.slint`: shared key and status.
@@ -105,12 +104,14 @@ Handover advances the queue once and adopts the running stream without replaying
 
 ## Tests
 
-Core checks cover bounds, missing attacks, unverified BPM, invalid inputs, gains,
-variable BPM, shared midpoint, exact six-second return and gentle endpoints. Session checks cover gated lookahead, changed sources, natural EOF with
+Checks cover bounds, missing attacks, invalid clocks, startup latency/drift, gains,
+variable BPM, shared midpoint and six-second return. Session checks cover gated lookahead, changed sources, natural EOF with
 TRIM/shuffle, pause/handover and preserved originals. UI checks dispatch the shared
 key and distinguish beat/crossfade readiness. Paused seeks retain readiness;
 seeking out of overlap rearms without advancing. Invalid markers are rejected;
 Persistence checks migration, MIX round-trip and malformed payloads.
+Muted native/Windows clock checks cover 420 ms startup lag and preserved sources;
+they do not measure audible attacks.
 
 [Native audio validation](../../testing/mix-validation.md), profile
 `dj-mix-validation`, documents private PipeWire/Pulse captures, midpoint/beat

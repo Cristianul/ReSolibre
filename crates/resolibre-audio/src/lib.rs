@@ -1,7 +1,12 @@
-//! Minimal Linux local-file adapter. Native ownership stays on the calling thread.
+//! Native local-file adapter. Native ownership stays on the calling thread.
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-compile_error!("The initial local-file prototype currently supports Linux x86_64 only.");
+#[cfg(not(all(
+    any(target_os = "linux", target_os = "windows"),
+    target_arch = "x86_64"
+)))]
+compile_error!("The local-file adapter supports Linux and Windows x86_64.");
+
+pub mod platform;
 
 mod analysis_cache;
 mod controls;
@@ -14,7 +19,7 @@ pub mod media_formats;
 #[cfg(test)]
 mod media_tests;
 pub mod metadata;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod mix_capture_tests;
 mod native_logging;
 mod original_audio;
@@ -23,19 +28,19 @@ mod rhythm_analysis;
 pub mod session;
 mod track_analysis;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod output_adaptation_tests;
 
 #[cfg(test)]
 mod edges_capture_tests;
 #[cfg(test)]
 mod eq_capture_tests;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod pcm_capture_tests;
 #[cfg(test)]
 mod scan_capture_tests;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod output_failure_tests;
 
 #[cfg(all(test, target_env = "gnu"))]
@@ -43,14 +48,11 @@ mod responsiveness_tests;
 
 use resolibre_core::{PlaybackEvent, SeekPosition};
 use std::ffi::{CStr, CString};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::ptr::NonNull;
-
-// Linux x86_64 open flag; other platforms must supply their own native adapter.
-const OPEN_NONBLOCK: i32 = 0o4000;
 
 /// Explicitly choose real device output or silent decoding for automated tests.
 #[derive(Clone, Copy, Debug)]
@@ -120,7 +122,7 @@ impl std::error::Error for PlaybackError {}
 pub struct LocalPlayer {
     handle: NonNull<ffi::Handle>,
     _native_lease: native_logging::NativeLease,
-    input: File,
+    input: Box<File>,
     encoded_info: Option<resolibre_core::track_info::StreamInfo>,
     loaded: bool,
     scanning: bool,
@@ -183,14 +185,8 @@ impl LocalPlayer {
             resolibre_core::equalizer::Equalizer,
         )>,
     ) -> Result<Self, PlaybackError> {
-        // Linux O_NONBLOCK prevents a FIFO from blocking before metadata validation.
-        // It has no effect on regular files. Opening first also avoids path-replace
-        // races: mpv receives this descriptor, not a second lookup of the user path.
-        let input = OpenOptions::new()
-            .read(true)
-            .custom_flags(OPEN_NONBLOCK)
-            .open(path)
-            .map_err(|error| PlaybackError::Input(error.kind()))?;
+        let input =
+            platform::open_media(path, true).map_err(|error| PlaybackError::Input(error.kind()))?;
         let metadata = input
             .metadata()
             .map_err(|error| PlaybackError::Input(error.kind()))?;
@@ -211,7 +207,7 @@ impl LocalPlayer {
             resolibre_core::session::Volume,
             resolibre_core::equalizer::Equalizer,
         )>,
-        analysis_pipe: Option<i32>,
+        analysis_pipe: Option<&str>,
     ) -> Result<Self, PlaybackError> {
         // SAFETY: this global query has no pointer arguments or ownership effects.
         let version = unsafe { ffi::mpv_client_api_version() };
@@ -223,17 +219,15 @@ impl LocalPlayer {
 
         // SAFETY: creation needs no inputs; a successful allocation has one owner.
         let handle = NonNull::new(unsafe { ffi::mpv_create() }).ok_or(PlaybackError::Allocation)?;
-        use std::os::unix::fs::FileExt;
         let mut header = [0_u8; 42];
-        let encoded_info = input
-            .read_exact_at(&mut header, 0)
+        let encoded_info = platform::read_header(&input, &mut header)
             .ok()
             .and_then(|()| resolibre_core::track_info::flac_stream_info(&header));
         let mut player = Self {
             encoded_info,
             handle,
             _native_lease: native_lease,
-            input,
+            input: Box::new(input),
             loaded: false,
             scanning: false,
             mix_tempo_filter: false,
@@ -270,8 +264,13 @@ impl LocalPlayer {
             player.add_analysis_hook()?;
         }
 
-        let descriptor_path = format!("/proc/self/fd/{}", player.input.as_raw_fd());
-        player.command(&["loadfile", &descriptor_path, "replace"], "load")?;
+        #[cfg(unix)]
+        {
+            let descriptor_path = format!("/proc/self/fd/{}", player.input.as_raw_fd());
+            player.command(&["loadfile", &descriptor_path, "replace"], "load")?;
+        }
+        #[cfg(windows)]
+        player.load_retained_input()?;
         Ok(player)
     }
 
@@ -317,7 +316,10 @@ impl LocalPlayer {
             AudioOutput::PrivatePulse
             | AudioOutput::PrivatePulseWithoutClock
             | AudioOutput::PrivatePulseInvalidClock => {
+                #[cfg(unix)]
                 output_failure_tests::configure(self)?;
+                #[cfg(windows)]
+                return Err(PlaybackError::InvalidEvent);
             }
             #[cfg(test)]
             AudioOutput::PrivatePipeWire => {

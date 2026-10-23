@@ -8,11 +8,13 @@ mod interface_state;
 mod library_duration;
 mod library_search;
 mod live_spectrum;
+mod path_encoding;
 mod picker;
 mod playback_edges;
 mod playlist_window;
 mod presentation;
 mod preset_store;
+mod profile_files;
 mod profile_reset;
 mod profile_storage;
 mod session_store;
@@ -20,11 +22,15 @@ mod themes;
 mod track_info;
 mod transport_scan;
 mod window_events;
+#[cfg_attr(windows, path = "window_group/windows.rs")]
 mod window_group;
 mod window_snap;
 
 #[cfg(test)]
 mod ui_tests;
+
+#[cfg(test)]
+mod scrub_tests;
 
 #[cfg(test)]
 mod visual_tests;

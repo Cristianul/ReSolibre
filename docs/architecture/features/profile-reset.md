@@ -36,6 +36,10 @@ entries and nested folders are rejected. Empty application directories and lock
 inodes remain. They contain no settings; keeping locks prevents competing lock names.
 I/O failure after deletion starts may leave a partial reset and is reported honestly.
 
+Windows pins ancestor directories and deletes validated leaves by retained handle.
+Shared-to-exclusive lock conversion happens after workers stop; failed conversion
+never resumes old autosaves. Reparse points and hardlinks fail closed.
+
 ## Key Files
 
 - `apps/desktop/ui/components/app-menu.slint`, `ui/player.slint`: menu/confirmation.

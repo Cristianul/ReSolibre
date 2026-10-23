@@ -5,7 +5,7 @@
 | Area | Direction |
 | --- | --- |
 | First desktop targets | Fedora, Debian and Ubuntu Linux |
-| Next desktop target | Windows |
+| Next desktop target | Windows; native x64 prototype build implemented, release qualification pending |
 | Future clients | Android; macOS/iOS where feasible; offline-capable web |
 | Contributor editors | VSCodium and IntelliJ; editor-independent project |
 | Native language/build | Rustup/Cargo; native dependency tooling only as needed |
@@ -21,6 +21,11 @@ access, SMB, filesystem portals and secret-store integration. Flatpak is a
 candidate, not an approved packaging result. Native packages/portable bundles
 remain alternatives. Windows packaging and future mobile store compatibility
 need separate verification.
+
+The native Windows prototype and PowerShell build were requested and implemented
+on 2026-10-24. Reuse shared playback/UI; isolate retained-file access, pipes,
+profile storage and window APIs. See [current scope and limits](../../development/windows-native.md).
+This does not approve an installer, bundled distribution or Live Spectrum port.
 
 ## License and third-party material
 

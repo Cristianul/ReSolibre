@@ -1,5 +1,7 @@
 use super::*;
 use crate::profile_storage;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -79,17 +81,20 @@ fn rejects_competing_windows_and_unsafe_entries() {
     assert!(clear(&fixture.0).is_err());
     assert!(fixture.0.join("session-v1.bin").exists());
     fs::remove_file(fixture.0.join("unknown.wav")).unwrap();
-    std::os::unix::fs::symlink("/tmp", fixture.0.join("analysis")).unwrap();
-    assert!(clear(&fixture.0).is_err());
-    fs::remove_file(fixture.0.join("analysis")).unwrap();
-    std::os::unix::fs::symlink(
-        fixture.0.join("session-v1.bin"),
-        fixture.0.join("equalizer-v1.txt"),
-    )
-    .unwrap();
-    assert!(clear(&fixture.0).is_err());
-    assert!(fixture.0.join("session-v1.bin").exists());
-    fs::remove_file(fixture.0.join("equalizer-v1.txt")).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("/tmp", fixture.0.join("analysis")).unwrap();
+        assert!(clear(&fixture.0).is_err());
+        fs::remove_file(fixture.0.join("analysis")).unwrap();
+        std::os::unix::fs::symlink(
+            fixture.0.join("session-v1.bin"),
+            fixture.0.join("equalizer-v1.txt"),
+        )
+        .unwrap();
+        assert!(clear(&fixture.0).is_err());
+        assert!(fixture.0.join("session-v1.bin").exists());
+        fs::remove_file(fixture.0.join("equalizer-v1.txt")).unwrap();
+    }
     fs::hard_link(
         fixture.0.join("session-v1.bin"),
         fixture.0.join("equalizer-v1.txt"),

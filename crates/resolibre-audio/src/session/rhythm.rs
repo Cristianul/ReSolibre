@@ -6,9 +6,7 @@ use resolibre_core::{
     analysis::tempo::TempoReport,
     queue::{Advance, Queue, RepeatMode},
 };
-use std::{
-    collections::VecDeque, fs::File, os::unix::fs::OpenOptionsExt, path::PathBuf, sync::Arc,
-};
+use std::{collections::VecDeque, fs::File, path::PathBuf, sync::Arc};
 
 #[derive(Clone, Debug, Default)]
 pub enum RhythmStatus {
@@ -206,11 +204,7 @@ impl RhythmRuntime {
             && !self.attempted.contains(id)
             && !self.cache.iter().any(|entry| entry.id == *id)
         {
-            let file = File::options()
-                .read(true)
-                .custom_flags(crate::OPEN_NONBLOCK)
-                .open(path)
-                .map_err(|_| ());
+            let file = crate::platform::open_media(path, false).map_err(|_| ());
             let input = file.and_then(|file| {
                 let key = SourceKey::read(&file, u32::MAX).map_err(|_| ())?;
                 Ok((file, key))

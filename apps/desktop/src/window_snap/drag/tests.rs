@@ -80,6 +80,7 @@ fn header_routes_group_gestures() {
 }
 
 /// Actual native frames follow one-pixel requests in both directions; hidden/detached peers cannot drag.
+#[cfg(unix)]
 #[test]
 #[ignore = "requires isolated KWin/XWayland; run through check_window_snap.py"]
 fn native_direct_group_drag() {

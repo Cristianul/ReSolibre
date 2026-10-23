@@ -49,7 +49,8 @@ pub const FORMAT_INT64: c_int = 4;
 pub const ERROR_PROPERTY_UNAVAILABLE: c_int = -10;
 pub const ERROR_COMMAND: c_int = -12;
 
-#[link(name = "mpv")]
+#[cfg_attr(unix, link(name = "mpv"))]
+#[cfg_attr(windows, link(name = "libmpv-2", kind = "raw-dylib"))]
 unsafe extern "C" {
     /// Releases an allocation returned by mpv, never a Rust-owned pointer.
     pub fn mpv_free(data: *mut c_void);

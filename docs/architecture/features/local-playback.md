@@ -36,6 +36,10 @@ Linux x86_64 passes a retained read-only `/proc/self/fd/<descriptor>`.
 Nonblocking open rejects non-regular files, including FIFOs. Paths never enter
 FFI; non-UTF-8 names and symlinks work. Concurrent inode mutation is possible.
 
+Windows x64 uses read-only libmpv stream callbacks and independent retained-handle
+cursors; active files deny write/delete sharing. See [native Windows](../../development/windows-native.md)
+for path validation, runtime setup and test limits.
+
 Configuration/scripts, URL helpers, video/subtitles, sidecar discovery, resume
 files and references are disabled. `media_formats.rs` owns audio/video candidates
 and the lavf allowlist. Video containers play audio only; codecs remain native.

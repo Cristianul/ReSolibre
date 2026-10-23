@@ -11,6 +11,9 @@ use resolibre_core::transition::{TempoReturn, TransitionFrame, TransitionPlan};
 use resolibre_core::{PlaybackEvent, SeekPosition};
 use std::time::{Duration, Instant};
 
+mod phase;
+use phase::{PhaseAdjustment, PhaseAlignment};
+
 #[derive(Default)]
 pub(super) struct MixRuntime {
     incoming: Option<Incoming>,
@@ -65,7 +68,8 @@ struct Incoming {
     seeked: bool,
     ready: bool,
     started: bool,
-    aligned: bool,
+    phase: PhaseAlignment,
+    phase_release: Option<f64>,
     opened: Instant,
     plan: Option<TransitionPlan>,
     outgoing_speed: f64,
@@ -251,7 +255,8 @@ impl Worker {
                 seeked: false,
                 ready: false,
                 started: false,
-                aligned: false,
+                phase: PhaseAlignment::default(),
+                phase_release: None,
                 opened: Instant::now(),
                 plan: None,
                 outgoing_speed: 1.0,
@@ -314,8 +319,13 @@ impl Worker {
             None => {}
         }
         if incoming.started {
-            if incoming.player.equalizer_rate() == 0 {
-                incoming.player.prepare_equalizer(self.snapshot.equalizer)?;
+            if incoming.player.is_seeking()? {
+                return Ok(());
+            }
+            if incoming.player.equalizer_rate() == 0
+                && !incoming.player.prepare_equalizer(self.snapshot.equalizer)?
+            {
+                return Ok(());
             }
             incoming
                 .player
@@ -376,9 +386,18 @@ impl Worker {
             let speed = plan.frame(plan.outgoing_start).incoming_speed;
             let source_start = incoming.edges.region.map_or(0.0, |region| region.start);
             if plan.outgoing_bpm.is_some() {
-                incoming.preroll = ((plan.incoming_start - source_start) / speed).clamp(0.0, 0.3);
+                let outgoing_speed = plan.frame(plan.outgoing_start).outgoing_speed;
+                let lead_seconds = ((plan.incoming_start - source_start) / speed).clamp(0.0, 0.3);
+                incoming.preroll = lead_seconds * outgoing_speed;
             }
-            let start = plan.incoming_start - incoming.preroll * speed;
+            let start = plan
+                .incoming_position(plan.outgoing_start - incoming.preroll)
+                .unwrap_or(plan.incoming_start)
+                .max(source_start);
+            // Equal-BPM plans may still need phase feedback. Prime their stretcher while muted too.
+            if plan.phase_matched {
+                incoming.player.prepare_mix_tempo()?;
+            }
             incoming.player.set_mix_speed(speed)?;
             incoming.incoming_speed = speed;
             incoming.player.seek_with_equalizer(
@@ -423,7 +442,7 @@ impl Worker {
         let Some(position) = position else {
             return Ok(());
         };
-        let frame = plan.frame(position);
+        let mut frame = plan.frame(position);
         if (incoming.outgoing_speed - frame.outgoing_speed).abs() > 0.0001 {
             current.set_mix_speed(frame.outgoing_speed)?;
             incoming.outgoing_speed = frame.outgoing_speed;
@@ -451,38 +470,69 @@ impl Worker {
             )?;
             incoming.player.set_paused(false)?;
             incoming.started = true;
+            let now = Instant::now();
+            incoming.phase.start(now);
         }
-        incoming.last_frame = Some(frame);
         self.snapshot.mix_status = if plan.outgoing_bpm.is_some() {
             MixStatus::TempoMixing
         } else {
             MixStatus::Crossfading
         };
+        let mut incoming_speed = frame.incoming_speed;
+        let seeking = incoming.player.is_seeking()?;
+        let next_position = if seeking {
+            None
+        } else {
+            incoming.player.audio_position()?
+        };
         if plan.phase_matched
             && audio_position.is_some()
             && let Some(wanted) = plan.incoming_position(position)
-            && let Some(next_position) = incoming.player.audio_position()?
+            && let Some(next_position) = next_position
         {
-            let error = next_position - wanted;
-            // Center the initial phase instead of using the 30 ms display
-            // tolerance as the correction target; buffering can add further error.
-            if !incoming.aligned
-                && error.abs() > 0.005
-                && position - plan.outgoing_start >= 0.15 - incoming.preroll
-                && frame.incoming_gain < 0.25
-            {
-                incoming.player.seek_with_equalizer(
-                    SeekPosition::from_seconds(wanted).ok_or(PlaybackError::InvalidEvent)?,
-                    self.snapshot.equalizer,
-                )?;
-                incoming.aligned = true;
-            } else if error.abs() <= 0.030 {
-                self.snapshot.mix_status = MixStatus::BeatMixing;
+            let can_seek = incoming.phase_release.is_none();
+            let adjustment = incoming.phase.observe(
+                wanted,
+                next_position,
+                frame.incoming_speed,
+                can_seek,
+                Instant::now(),
+            );
+            match adjustment {
+                Some(PhaseAdjustment::Seek(target)) => {
+                    incoming.player.seek_with_equalizer(
+                        SeekPosition::from_seconds(target).ok_or(PlaybackError::InvalidEvent)?,
+                        self.snapshot.equalizer,
+                    )?;
+                }
+                Some(PhaseAdjustment::Follow {
+                    speed,
+                    synchronized,
+                }) => {
+                    incoming_speed = speed;
+                    if synchronized {
+                        self.snapshot.mix_status = MixStatus::BeatMixing;
+                        incoming.phase_release.get_or_insert(position);
+                    }
+                }
+                None => {}
             }
         }
-        if (incoming.incoming_speed - frame.incoming_speed).abs() > 0.0001 {
-            incoming.player.set_mix_speed(frame.incoming_speed)?;
-            incoming.incoming_speed = frame.incoming_speed;
+        if plan.phase_matched {
+            if !seeking
+                && (audio_position.is_none() || next_position.is_none())
+                && incoming.phase.permits_unverified_fallback(Instant::now())
+            {
+                // Missing clocks retain the ordinary TEMPO fallback; measured misalignment never does.
+                incoming.phase_release.get_or_insert(position);
+            }
+            frame = phase::gate_gains(plan, position, frame, incoming.phase_release)
+                .ok_or(PlaybackError::UnexpectedEnd)?;
+        }
+        incoming.last_frame = Some(frame);
+        if (incoming.incoming_speed - incoming_speed).abs() > 0.0001 {
+            incoming.player.set_mix_speed(incoming_speed)?;
+            incoming.incoming_speed = incoming_speed;
         }
         current.set_amplitude(self.amplitude * frame.outgoing_gain)?;
         incoming
@@ -524,12 +574,11 @@ impl Worker {
 
     /// Advances the authoritative queue once, adopting the already-running next stream without replaying its intro.
     pub(super) fn promote_mix(&mut self) -> Result<bool, PlaybackError> {
-        if !self
-            .mixing
-            .incoming
-            .as_ref()
-            .is_some_and(|incoming| incoming.started)
-        {
+        if !self.mixing.incoming.as_ref().is_some_and(|incoming| {
+            incoming.started
+                && (!incoming.plan.is_some_and(|plan| plan.phase_matched)
+                    || incoming.phase_release.is_some())
+        }) {
             return Ok(false);
         }
         let mut incoming = self

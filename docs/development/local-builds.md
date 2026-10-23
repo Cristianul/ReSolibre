@@ -11,7 +11,7 @@ OS porting, installers or distribution packaging. Use the
 
 ## Current Behavior
 
-From the checkout root, with Python 3.9+, Rust/Cargo, a C11 compiler, pkg-config,
+On Linux, from the checkout root, with Python 3.9+, Rust/Cargo, a C11 compiler, pkg-config,
 libmpv development files and Slint's Linux native dependencies installed:
 
 ```sh
@@ -21,10 +21,15 @@ python3 build_release.py
 
 The scripts locate the checkout themselves, so invoking their absolute paths
 from another directory also works. They detect the OS and architecture before
-building. The current desktop/audio adapter supports Linux x86_64 only; Windows,
-macOS and other architectures get an explicit unsupported-platform error.
-Porting remains separate work. Each build explicitly selects the installed
+building. The desktop/audio adapter supports Linux x86_64 and Windows x86_64
+MSVC. macOS and other architectures get an unsupported-platform error.
+Each build explicitly selects the installed
 Rust compiler's host target and preserves Cargo.lock with `--locked`.
+
+On Windows use `./build_windows.ps1 -Profile Debug` or `-Profile Release`.
+Optional switches are `-Offline`, `-Jobs N`, `-Run`, and `-Python <executable>`.
+The Python entries also work; Windows outputs have the `.exe` suffix.
+See [Windows prerequisites, runtime staging and validation](windows-native.md).
 
 Debug uses Cargo's development profile with debugger symbols and assertions;
 the existing core/RustFFT optimization keeps interactive DSP usable. Release
@@ -50,7 +55,7 @@ With default Cargo settings, executables are at
 executable path, honoring custom Cargo output directories. They do not replace
 the separate app-menu installer's `target/debug` executable.
 
-Existing `.local/native/usr/lib64` or `lib` directories are added to compiler,
+On Linux, existing `.local/native/usr/lib64` or `lib` directories are added to compiler,
 loader and pkg-config search paths for the child processes only. User flags and
 paths are retained; paths containing spaces are supported. No libraries are
 downloaded or installed by the scripts, and no profile or music data is touched
@@ -68,8 +73,9 @@ rejection, missing dependencies, compiler mismatch, argument/path preservation,
 custom output directories, both real entry points with fake tools and failure
 propagation. On the Fedora x86_64 reference, both real builds passed on
 2026-10-23; ELF inspection confirmed debug information only in the debug build,
-and both binaries resolved their runtime libraries. OS rejection is tested with
-simulated hosts; no Windows/macOS build is claimed.
+and both binaries resolved their runtime libraries. Windows debug/release builds
+and the actual PowerShell wrapper were checked on 2026-10-24; see the
+[Windows evidence and limitations](windows-native.md). No macOS build is claimed.
 
 ## Edge Cases
 

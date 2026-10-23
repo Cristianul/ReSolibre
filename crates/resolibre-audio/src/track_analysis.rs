@@ -50,12 +50,8 @@ impl TrackJob {
                 let (file, key) = match input {
                     TrackInput::Retained(file, key) => (file, key),
                     TrackInput::Path(path) => {
-                        use std::os::unix::fs::OpenOptionsExt;
-                        let file = File::options()
-                            .read(true)
-                            .custom_flags(crate::OPEN_NONBLOCK)
-                            .open(path)
-                            .map_err(|_| UNAVAILABLE)?;
+                        let file =
+                            crate::platform::open_media(&path, false).map_err(|_| UNAVAILABLE)?;
                         let key = SourceKey::read(&file, u32::MAX).map_err(|_| UNAVAILABLE)?;
                         (file, key)
                     }

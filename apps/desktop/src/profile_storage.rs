@@ -1,13 +1,12 @@
 //! Private bounded files shared by session and preset storage; called only by owned jobs.
 
-use std::fs::{self, File, OpenOptions};
+use crate::profile_files;
+use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-const NO_FOLLOW_NONBLOCK: i32 = 0x20000 | 0x800;
-
 /// Resolves only the current OS user's config area, never a music-file-relative destination.
+#[cfg(unix)]
 pub fn default_directory() -> Result<PathBuf, &'static str> {
     if let Some(root) = std::env::var_os("XDG_CONFIG_HOME") {
         let root = PathBuf::from(root);
@@ -25,7 +24,7 @@ pub fn default_directory() -> Result<PathBuf, &'static str> {
 /// Rejects a replaced app root; OS-configured parent directories remain trusted.
 fn check_directory(directory: &Path) -> Result<bool, &'static str> {
     match directory.symlink_metadata() {
-        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(true),
+        Ok(metadata) if metadata.is_dir() && !profile_files::linked(&metadata) => Ok(true),
         Ok(_) => Err("Invalid application storage directory"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(_) => Err("Cannot inspect application storage"),
@@ -35,10 +34,7 @@ fn check_directory(directory: &Path) -> Result<bool, &'static str> {
 /// Creates only application storage with private permissions, never a music-relative path.
 fn ensure_directory(directory: &Path) -> Result<(), &'static str> {
     if !check_directory(directory)? {
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(directory)
+        profile_files::create_directory(directory)
             .map_err(|_| "Cannot create application storage")?;
     }
     check_directory(directory)?;
@@ -50,20 +46,15 @@ pub fn read(directory: &Path, name: &str, limit: u64) -> Result<Option<Vec<u8>>,
     if !check_directory(directory)? {
         return Ok(None);
     }
-    let file = match OpenOptions::new()
+    let file = match profile_files::options()
         .read(true)
-        .custom_flags(NO_FOLLOW_NONBLOCK)
         .open(directory.join(name))
     {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err("Cannot read application settings"),
     };
-    if !file
-        .metadata()
-        .map_err(|_| "Cannot inspect application settings")?
-        .is_file()
-    {
+    if !profile_files::regular(&file).map_err(|_| "Cannot inspect application settings")? {
         return Err("Application settings must be a regular file");
     }
     let mut bytes = Vec::new();
@@ -81,15 +72,14 @@ pub fn write(directory: &Path, name: &str, bytes: &[u8]) -> Result<(), &'static 
     ensure_directory(directory)?;
     let target = directory.join(name);
     if let Ok(metadata) = target.symlink_metadata()
-        && !metadata.is_file()
+        && (!metadata.is_file() || profile_files::linked(&metadata))
     {
         return Err("Invalid application settings destination");
     }
     let temporary = directory.join(format!(".{name}-{}.tmp", std::process::id()));
-    let mut file = OpenOptions::new()
+    let mut file = profile_files::options()
         .write(true)
         .create_new(true)
-        .mode(0o600)
         .open(&temporary)
         .map_err(|_| "Cannot create settings transaction")?;
     let result = (|| {
@@ -97,10 +87,9 @@ pub fn write(directory: &Path, name: &str, bytes: &[u8]) -> Result<(), &'static 
             .map_err(|_| "Cannot write application settings")?;
         file.sync_all()
             .map_err(|_| "Cannot flush application settings")?;
-        fs::rename(&temporary, &target).map_err(|_| "Cannot replace application settings")?;
-        File::open(directory)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| "Cannot flush settings directory")
+        profile_files::replace(&temporary, &target)
+            .map_err(|_| "Cannot replace application settings")?;
+        profile_files::sync_directory(directory).map_err(|_| "Cannot flush settings directory")
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
@@ -109,21 +98,44 @@ pub fn write(directory: &Path, name: &str, bytes: &[u8]) -> Result<(), &'static 
 }
 
 /// Owns the lock independently of transient descriptor copies in forked native children.
-pub struct SessionLease(File);
+pub struct SessionLease {
+    file: File,
+    locked: std::sync::Mutex<bool>,
+}
 
 impl SessionLease {
-    /// Upgrades the activity lease only when no other window is using this profile.
+    /// Requests exclusive reset access after the caller has stopped all profile workers.
+    /// A failure must not resume storage: another reset may have won the Windows upgrade gap.
     pub fn make_exclusive(&self) -> Result<(), &'static str> {
-        self.0
-            .try_lock()
-            .map_err(|_| "Close other ReSolibre windows before resetting")
+        let mut locked = self.locked.lock().map_err(|_| "Profile lock unavailable")?;
+        #[cfg(windows)]
+        if *locked {
+            // LockFileEx cannot upgrade a shared lock in place. No profile work is active here.
+            self.file
+                .unlock()
+                .map_err(|_| "Cannot release profile access lock")?;
+            *locked = false;
+        }
+        if self.file.try_lock().is_err() {
+            #[cfg(windows)]
+            {
+                *locked = self.file.try_lock_shared().is_ok();
+            }
+            return Err("Close other ReSolibre windows before resetting");
+        }
+        *locked = true;
+        Ok(())
     }
 }
 
 impl Drop for SessionLease {
     /// Explicitly unlocks after the last storage owner exits, even if a child has not reached exec yet.
     fn drop(&mut self) {
-        if self.0.unlock().is_err() {
+        let locked = self
+            .locked
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner());
+        if *locked && self.file.unlock().is_err() {
             eprintln!("warn: session storage lock release failed");
         }
     }
@@ -132,49 +144,53 @@ impl Drop for SessionLease {
 /// Holds an exclusive nonblocking profile lease; another instance cannot overwrite its session.
 pub fn lock_session(directory: &Path) -> Result<SessionLease, &'static str> {
     ensure_directory(directory)?;
-    let file = OpenOptions::new()
+    let file = profile_files::options()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .mode(0o600)
-        .custom_flags(NO_FOLLOW_NONBLOCK)
         .open(directory.join("session.lock"))
         .map_err(|_| "Cannot open session storage lock")?;
-    if !file
-        .metadata()
-        .map_err(|_| "Cannot inspect session storage lock")?
-        .is_file()
-    {
+    if !profile_files::regular(&file).map_err(|_| "Cannot inspect session storage lock")? {
         return Err("Invalid session storage lock");
     }
     file.try_lock()
         .map_err(|_| "Session storage is in use; this window will not save its session")?;
-    Ok(SessionLease(file))
+    Ok(SessionLease {
+        file,
+        locked: std::sync::Mutex::new(true),
+    })
 }
 
 /// Protects the profile for a window's lifetime; reset needs exclusive access to this same inode.
 pub fn share_profile(directory: &Path) -> Result<SessionLease, &'static str> {
     ensure_directory(directory)?;
-    let file = OpenOptions::new()
+    let file = profile_files::options()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .mode(0o600)
-        .custom_flags(NO_FOLLOW_NONBLOCK)
         .open(directory.join("profile.lock"))
         .map_err(|_| "Cannot open profile access lock")?;
-    if !file
-        .metadata()
-        .map_err(|_| "Cannot inspect profile access lock")?
-        .is_file()
-    {
+    if !profile_files::regular(&file).map_err(|_| "Cannot inspect profile access lock")? {
         return Err("Invalid profile access lock");
     }
     file.try_lock_shared()
         .map_err(|_| "Profile reset in progress; reopen ReSolibre")?;
-    Ok(SessionLease(file))
+    Ok(SessionLease {
+        file,
+        locked: std::sync::Mutex::new(true),
+    })
+}
+
+/// Keeps Windows settings in this user's local application-data directory.
+#[cfg(windows)]
+pub fn default_directory() -> Result<PathBuf, &'static str> {
+    let root = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or("No user configuration directory")?;
+    Ok(root.join("ReSolibre"))
 }
 
 #[cfg(test)]
@@ -184,10 +200,11 @@ mod tests {
     /// A duplicate descriptor models the fork/exec window; it must not outlive the application's lock ownership.
     #[test]
     fn session_lease_releases_despite_inherited_descriptor() {
-        let directory = std::env::temp_dir().join(format!("resolibre-lease-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("resolibre-lease-{}", std::process::id()));
         fs::create_dir(&directory).unwrap();
         let lease = lock_session(&directory).unwrap();
-        let inherited = lease.0.try_clone().unwrap();
+        let inherited = lease.file.try_clone().unwrap();
         assert!(lock_session(&directory).is_err());
         drop(lease);
         let restarted = lock_session(&directory).unwrap();

@@ -97,17 +97,23 @@ fn migration_and_untrusted_files_preserve_good_presets() {
     );
     assert_eq!(fs::read(root.join("equalizer-v1.txt")).unwrap(), legacy);
     fs::write(folder.join("bad.resolibre-eq"), vec![0; 4097]).unwrap();
-    std::os::unix::fs::symlink(root.join("equalizer-v1.txt"), folder.join("link.resolibre-eq"))
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            root.join("equalizer-v1.txt"),
+            folder.join("link.resolibre-eq"),
+        )
         .unwrap();
-    assert!(files::read_preset(&folder.join("link.resolibre-eq")).is_err());
-    assert!(
-        std::process::Command::new("mkfifo")
-            .arg(folder.join("pipe.resolibre-eq"))
-            .status()
-            .unwrap()
-            .success()
-    );
-    assert!(files::read_preset(&folder.join("pipe.resolibre-eq")).is_err());
+        assert!(files::read_preset(&folder.join("link.resolibre-eq")).is_err());
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(folder.join("pipe.resolibre-eq"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(files::read_preset(&folder.join("pipe.resolibre-eq")).is_err());
+    }
     let Completion::Catalog {
         entries, skipped, ..
     } = files::load(&root).unwrap()
@@ -123,7 +129,10 @@ fn migration_and_untrusted_files_preserve_good_presets() {
     )
     .unwrap();
     assert!(files::save(&root, replacement, true).is_err());
-    assert_eq!(fs::read(folder.join("legacy-1.resolibre-eq")).unwrap(), before);
+    assert_eq!(
+        fs::read(folder.join("legacy-1.resolibre-eq")).unwrap(),
+        before
+    );
     let music = root.join("song.flac");
     fs::write(&music, b"original music").unwrap();
     assert!(files::export(&music, &entries[0].preset).is_err());

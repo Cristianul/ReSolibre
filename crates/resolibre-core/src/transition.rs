@@ -12,8 +12,10 @@ use crate::playback_edges::PlaybackRegion;
 
 pub const MAX_EDGE_SKIP_SECONDS: f64 = 16.0;
 pub const MAX_TEMPO_CHANGE: f64 = 0.20;
-/// Reach the shared midpoint over six outgoing source seconds before overlap.
+/// Approach the shared midpoint over six outgoing source seconds.
 pub const TEMPO_MEET_DURATION_SECONDS: f64 = 6.0;
+/// Hold the shared tempo before overlap so buffered audio can finish the approach.
+pub const TEMPO_MEET_SETTLE_SECONDS: f64 = 1.0;
 
 /// Shares the finite MIX speed limit between planning and native adapters.
 pub fn is_supported_mix_speed(speed: f64) -> bool {
@@ -185,7 +187,7 @@ impl TransitionPlan {
         let overlap = overlap_duration(duration, duration);
         let cut = MAX_EDGE_SKIP_SECONDS.min(duration * 0.1);
         // Sixteen seconds cover native loading, beat rounding and muted preroll.
-        let preparation_lead = 16.0 + TEMPO_MEET_DURATION_SECONDS;
+        let preparation_lead = 16.0 + TEMPO_MEET_DURATION_SECONDS + TEMPO_MEET_SETTLE_SECONDS;
         Some((outgoing.end - overlap - cut - preparation_lead).max(outgoing.start))
     }
 
@@ -221,8 +223,12 @@ impl TransitionPlan {
             let speed_ratio = current / self.beat_ratio.comparable_incoming_bpm(next);
             let midpoint_speed = speed_ratio.sqrt();
             if position < self.outgoing_start {
-                let duration = TEMPO_MEET_DURATION_SECONDS.min(self.outgoing_start);
-                let start = self.outgoing_start - duration;
+                // Finish before either stream overlaps audibly. Short introductions
+                // retain time for both a smooth approach and a stable shared tempo.
+                let settling = TEMPO_MEET_SETTLE_SECONDS.min(self.outgoing_start / 2.0);
+                let reached = self.outgoing_start - settling;
+                let duration = TEMPO_MEET_DURATION_SECONDS.min(reached);
+                let start = reached - duration;
                 let progress = ((position - start) / duration.max(f64::EPSILON)).clamp(0.0, 1.0);
                 let blend = progress * progress * (3.0 - 2.0 * progress);
                 outgoing_speed = 1.0 + (1.0 / midpoint_speed - 1.0) * blend;
@@ -512,7 +518,7 @@ mod tests {
         assert_eq!(fallback.outgoing_start, 216.0);
         assert_eq!(fallback.outgoing_end, 240.0);
         assert_eq!(fallback.incoming_start, 0.0);
-        assert_eq!(TransitionPlan::preparation_start(region), Some(178.0));
+        assert_eq!(TransitionPlan::preparation_start(region), Some(177.0));
 
         let mut previous = fallback.frame(fallback.outgoing_start);
         for step in 0..=24 {
@@ -796,8 +802,10 @@ mod tests {
                     phase_matched: true,
                     beat_ratio: BeatRatio::OneToOne,
                 };
-                let duration = TEMPO_MEET_DURATION_SECONDS.min(start);
-                let beginning = start - duration;
+                let settling = 1.0_f64.min(start / 2.0);
+                let reached = start - settling;
+                let duration = TEMPO_MEET_DURATION_SECONDS.min(reached);
+                let beginning = reached - duration;
                 let midpoint = (current / next).sqrt();
                 assert_eq!(plan.frame(beginning).outgoing_speed, 1.0);
                 let mut previous = 1.0;
@@ -812,6 +820,17 @@ mod tests {
                     previous = frame.outgoing_speed;
                 }
                 assert!((previous - 1.0 / midpoint).abs() < 1e-10);
+                // Already-buffered outgoing samples must also have the shared BPM
+                // when the incoming gain first rises, in either tempo direction.
+                for delay in [0.0, settling / 2.0, settling] {
+                    let outgoing = plan.frame(start - delay);
+                    let incoming = plan.frame(start);
+                    assert!(
+                        (current * outgoing.outgoing_speed - next * incoming.incoming_speed).abs()
+                            < 1e-10,
+                        "both tempos must settle before overlap, including {delay}s of output delay"
+                    );
+                }
                 assert_eq!(plan.frame(start + 3.0).incoming_speed, midpoint);
             }
         }

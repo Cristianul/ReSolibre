@@ -1,13 +1,11 @@
 //! Read-only tag and embedded-cover probing, isolated from playback and UI threads.
 
 mod process;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
 
 use crate::edge_analysis::SourceKey;
 use serde_json::Value;
-use std::fs::OpenOptions;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::{
     Arc,
@@ -92,11 +90,7 @@ fn inspect_cached(
 ) -> Result<Details, ()> {
     let started = Instant::now();
     // Linux O_NONBLOCK/O_NOFOLLOW: never wait on a FIFO or follow an imported symlink.
-    let file = OpenOptions::new()
-        .read(true)
-        .custom_flags(crate::OPEN_NONBLOCK | 0o400000)
-        .open(path)
-        .map_err(|_| ())?;
+    let file = crate::platform::open_media(&path, false).map_err(|_| ())?;
     let key = SourceKey::read(&file, 0).map_err(|_| ())?;
     let mut database = config.and_then(|config| config.metadata_database());
     if !want_cover && let Some(database) = &database {
@@ -293,11 +287,7 @@ impl Job<WarmMetadata> {
                     if worker_cancel.load(Ordering::Relaxed) {
                         return Err(());
                     }
-                    let Ok(file) = OpenOptions::new()
-                        .read(true)
-                        .custom_flags(crate::OPEN_NONBLOCK | 0o400000)
-                        .open(path)
-                    else {
+                    let Ok(file) = crate::platform::open_media(&path, false) else {
                         continue;
                     };
                     let Ok(key) = SourceKey::read(&file, 0) else {

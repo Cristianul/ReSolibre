@@ -1,5 +1,6 @@
 //! On-demand libmpv decoding with an owned bounded pipe; no device, playback processing or disk output.
 
+mod pipe;
 mod preload;
 
 use super::SourceKey;
@@ -8,7 +9,6 @@ use resolibre_core::PlaybackEvent;
 use std::ffi::CString;
 use std::fs::File;
 use std::io::{self, Read};
-use std::os::fd::{AsRawFd, FromRawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -16,9 +16,11 @@ const UNAVAILABLE: &str = "Original audio analysis unavailable";
 
 impl LocalPlayer {
     /// Configures only an adapter-owned pipe; no external destination or user DSP enters original analysis.
-    pub(crate) fn configure_analysis_pipe(&mut self, descriptor: i32) -> Result<(), PlaybackError> {
-        let destination = CString::new(format!("/proc/self/fd/{descriptor}"))
-            .map_err(|_| PlaybackError::InvalidEvent)?;
+    pub(crate) fn configure_analysis_pipe(
+        &mut self,
+        destination: &str,
+    ) -> Result<(), PlaybackError> {
+        let destination = CString::new(destination).map_err(|_| PlaybackError::InvalidEvent)?;
         self.set_option(c"ao", c"pcm")?;
         self.set_option(c"ao-pcm-file", &destination)?;
         self.set_option(c"ao-pcm-waveheader", c"yes")?;
@@ -66,15 +68,14 @@ fn decode_inner<T>(
     consume: impl FnOnce(&mut Reader<'_>, Instant) -> Result<T, ()>,
 ) -> Result<T, &'static str> {
     let started = Instant::now();
-    let (read, write) = pipe().map_err(|_| UNAVAILABLE)?;
+    let (read, write, destination) = pipe::create().map_err(|_| UNAVAILABLE)?;
     let retained = file.try_clone().map_err(|_| UNAVAILABLE)?;
-    let player =
-        LocalPlayer::open_owned(retained, AudioOutput::Silent, None, Some(write.as_raw_fd()))
-            .map_err(|_| UNAVAILABLE)?;
+    let player = LocalPlayer::open_owned(retained, AudioOutput::Silent, None, Some(&destination))
+        .map_err(|_| UNAVAILABLE)?;
     // Own the pipe before preload can continue; every error closes the reader before native teardown.
     let mut reader = Reader {
         pipe: Some(read),
-        writer: Some(write),
+        writer: write,
         player: Some(player),
         cancel,
         started,
@@ -100,24 +101,8 @@ fn decode_inner<T>(
     Ok(result)
 }
 
-/// Creates close-on-exec descriptors with exactly one Rust owner each; kernel pipe memory is bounded.
-fn pipe() -> io::Result<(File, File)> {
-    let mut descriptors = [-1; 2];
-    // SAFETY: pipe2 writes two integers into live storage; failed calls transfer no descriptors.
-    if unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) } < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: successful pipe2 returned distinct owned descriptors; neither has another Rust owner.
-    Ok(unsafe {
-        (
-            File::from_raw_fd(descriptors[0]),
-            File::from_raw_fd(descriptors[1]),
-        )
-    })
-}
-
 pub(crate) struct Reader<'a> {
-    pipe: Option<File>,
+    pipe: Option<pipe::Pipe>,
     writer: Option<File>,
     player: Option<LocalPlayer>,
     cancel: &'a AtomicBool,
@@ -156,28 +141,16 @@ impl Read for Reader<'_> {
                 self.writer = None;
             }
             let pipe = self.pipe.as_mut().ok_or_else(unavailable)?;
-            let mut descriptor = libc::pollfd {
-                fd: pipe.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            };
-            // SAFETY: poll borrows one initialized descriptor entry owned throughout this bounded call.
-            let ready = unsafe { libc::poll(&mut descriptor, 1, 20) };
-            if ready < 0 {
-                let error = io::Error::last_os_error();
-                if error.kind() == io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(error);
-            }
-            if ready > 0 {
-                let count = pipe.read(bytes)?;
-                if count > 0 {
-                    return Ok(count);
-                }
-                if self.ended {
-                    return Ok(0);
-                }
+            match pipe::read(pipe, bytes) {
+                Ok(count) if count > 0 => return Ok(count),
+                Ok(_) if self.ended => return Ok(0),
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                    ) => {}
+                Err(error) => return Err(error),
             }
             if self.ended {
                 if self.player.is_none() {

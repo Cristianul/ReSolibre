@@ -8,6 +8,7 @@
 | [Session](../../crates/resolibre-audio/src/session/mod.rs) | [TRIM/FADE](features/playback-edges.md) |
 | [Audio](../../crates/resolibre-audio/src/lib.rs) | libmpv; [MIX](features/dj-mix.md) |
 | [FFI](../../crates/resolibre-audio/src/ffi.rs) | API |
+| [Platform I/O](../../crates/resolibre-audio/src/platform.rs) | [Windows](../development/windows-native.md) retained files/pipes |
 | [Analysis](features/track-analysis.md) | [Live](features/live-spectrum.md)/[cache](features/analysis-cache.md)/[batch](features/library-analysis.md) |
 | [Metadata](features/track-metadata.md) | Tags/covers |
 | [local-play](../../crates/resolibre-audio/examples/local-play.rs) | CLI/memory |

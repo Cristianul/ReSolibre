@@ -1,4 +1,5 @@
 //! Real libmpv integration using generated audio and an explicit silent sink.
+#![cfg(unix)]
 
 use resolibre_audio::{AudioOutput, LocalPlayer, PlaybackError};
 use resolibre_core::{AudioFormat, AudioFormats, PlaybackEvent, SampleFormat, SeekPosition};

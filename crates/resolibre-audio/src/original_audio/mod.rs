@@ -3,11 +3,13 @@
 pub(crate) mod native;
 pub(crate) mod pcm;
 
-use std::fs::{File, Metadata};
-use std::os::fd::OwnedFd;
+use crate::platform::PipeReader;
+use std::fs::File;
+#[cfg(unix)]
+use std::fs::Metadata;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
-use std::os::unix::net::UnixStream;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -26,13 +28,53 @@ pub(crate) struct SourceKey {
 }
 
 impl SourceKey {
+    /// Uses retained Windows volume/file identity and write/change timestamps for cache invalidation.
+    #[cfg(windows)]
+    fn from_windows_file(file: &File, stream: u32) -> Result<Self, &'static str> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO, FileBasicInfo, GetFileInformationByHandle,
+            GetFileInformationByHandleEx,
+        };
+        let mut identity = BY_HANDLE_FILE_INFORMATION::default();
+        let mut facts = FILE_BASIC_INFO::default();
+        // SAFETY: both Win32 APIs receive a live retained handle and correctly sized output structures.
+        let success = unsafe {
+            GetFileInformationByHandle(file.as_raw_handle(), &mut identity) != 0
+                && GetFileInformationByHandleEx(
+                    file.as_raw_handle(),
+                    FileBasicInfo,
+                    (&mut facts as *mut FILE_BASIC_INFO).cast(),
+                    std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+                ) != 0
+        };
+        if !success {
+            return Err(UNAVAILABLE);
+        }
+        Ok(Self {
+            device: u64::from(identity.dwVolumeSerialNumber),
+            inode: (u64::from(identity.nFileIndexHigh) << 32) | u64::from(identity.nFileIndexLow),
+            size: (u64::from(identity.nFileSizeHigh) << 32) | u64::from(identity.nFileSizeLow),
+            modified: (facts.LastWriteTime, 0),
+            // Negative nanoseconds cannot occur in Unix metadata keys: distinguish OS encodings.
+            changed: (facts.ChangeTime, -1),
+            stream,
+        })
+    }
     /// Snapshots the already-open regular file used by playback, rather than resolving its path again.
     pub(crate) fn read(file: &File, stream: u32) -> Result<Self, &'static str> {
         let metadata = file.metadata().map_err(|_| UNAVAILABLE)?;
         if !metadata.is_file() {
             return Err(UNAVAILABLE);
         }
-        Ok(Self::from_metadata(&metadata, stream))
+        #[cfg(unix)]
+        {
+            Ok(Self::from_metadata(&metadata, stream))
+        }
+        #[cfg(windows)]
+        {
+            Self::from_windows_file(file, stream)
+        }
     }
 
     /// Serializes local file facts for metadata reuse, never as proof of audio content identity.
@@ -54,6 +96,7 @@ impl SourceKey {
     }
 
     /// Makes cache invalidation explicit for rewrites, replacements and alternate audio streams.
+    #[cfg(unix)]
     fn from_metadata(metadata: &Metadata, stream: u32) -> Self {
         Self {
             device: metadata.dev(),
@@ -81,18 +124,16 @@ pub(crate) fn decode<T>(
     key: SourceKey,
     cancel: &AtomicBool,
     deadline: Duration,
-    consume: impl FnOnce(&mut UnixStream, Instant) -> Result<T, ()>,
+    consume: impl FnOnce(&mut PipeReader, Instant) -> Result<T, ()>,
 ) -> Result<T, &'static str> {
     let started = Instant::now();
-    let (mut reader, writer) = UnixStream::pair().map_err(|_| UNAVAILABLE)?;
+    let (mut reader, writer) = crate::platform::output_pipe().map_err(|_| UNAVAILABLE)?;
     reader
         .set_read_timeout(Some(Duration::from_millis(20)))
         .map_err(|_| UNAVAILABLE)?;
-    use std::os::fd::AsRawFd;
-    let input =
-        File::open(format!("/proc/self/fd/{}", file.as_raw_fd())).map_err(|_| UNAVAILABLE)?;
+    let input = crate::platform::independent_file(&file).map_err(|_| UNAVAILABLE)?;
     let mut child = Decoder(
-        Command::new("ffmpeg")
+        crate::platform::helper("ffmpeg")
             .env_remove("FFREPORT")
             .args([
                 "-hide_banner",
@@ -131,7 +172,7 @@ pub(crate) fn decode<T>(
                 "pipe:1",
             ])
             .stdin(Stdio::from(input))
-            .stdout(Stdio::from(OwnedFd::from(writer)))
+            .stdout(writer)
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| UNAVAILABLE)?,

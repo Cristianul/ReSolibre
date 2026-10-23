@@ -81,7 +81,8 @@ track duration. Large callbacks may drop input after eight blocks. A late format
 or clock may temporarily hide data. There is no persistent analysis cache.
 
 C transport and core algorithms are platform-neutral; the loader/build currently
-targets Linux. Windows/Android packaging, iOS signing, physical-device alignment
+targets Linux. The native Windows player explicitly reports Live Spectrum unavailable.
+Windows/Android tap packaging, iOS signing, physical-device alignment
 and full desktop CPU/GPU budgets still require validation. This is not a completed
 Windows/mobile application port.
 

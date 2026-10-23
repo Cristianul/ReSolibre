@@ -45,7 +45,8 @@ fn close(window: &PlayerWindow, controller: &Rc<RefCell<Controller>>) {
 #[test]
 fn controls_and_close_restore_the_latest_session() {
     i_slint_backend_testing::init_no_event_loop();
-    let directory = std::env::temp_dir().join(format!("resolibre-restore-ui-{}", std::process::id()));
+    let directory =
+        std::env::temp_dir().join(format!("resolibre-restore-ui-{}", std::process::id()));
     std::fs::create_dir(&directory).unwrap();
     let (window, controller) = open(directory.clone());
     // Startup cannot allow a later disk result to replace a newly accepted action.
@@ -60,7 +61,7 @@ fn controls_and_close_restore_the_latest_session() {
         "/unavailable/one.mp3",
     ]
     .into_iter()
-    .map(PathBuf::from)
+    .map(|path| std::env::temp_dir().join(path.trim_start_matches('/')))
     .collect();
     controller
         .borrow_mut()
@@ -163,7 +164,7 @@ fn confirmed_reset_clears_profile_after_owned_workers_stop() {
     wait(&window, &controller, |c| !c.restoring());
     controller.borrow_mut().submit(
         &window,
-        Command::Add(vec![PathBuf::from("/unavailable/music.flac")]),
+        Command::Add(vec![std::env::temp_dir().join("unavailable/music.flac")]),
     );
     wait(&window, &controller, |c| {
         c.session.snapshot().tracks.len() == 1

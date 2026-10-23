@@ -3630,6 +3630,7 @@ dependencies = [
  "resolibre-core",
  "resolibre-storage",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3652,6 +3653,7 @@ dependencies = [
  "rfd",
  "slint",
  "slint-build",
+ "windows-sys 0.61.2",
  "x11rb",
 ]
 
@@ -3664,6 +3666,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "symphonia",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -1,9 +1,9 @@
 //! One bounded drop batch and background expansion job; UI decides Add or Replace after scanning.
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod native_tests;
 pub mod scan;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
 
 use crate::window_events::WindowEvents;

@@ -5,6 +5,7 @@
 | Path | Purpose |
 | --- | --- |
 | [Entry](../../apps/desktop/src/main.rs) | Startup/close |
+| [Windows](../development/windows-native.md) | Build, native paths/profile/window adapters |
 | [Reset](features/profile-reset.md) | Menu/profile reset |
 | [EQ presets](features/named-eq-presets.md) | Presets |
 | [Bindings](../../apps/desktop/src/presentation.rs) | [TRIM/FADE](features/playback-edges.md) |

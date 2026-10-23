@@ -1,8 +1,10 @@
 //! Coalesced owned storage jobs: one write in flight and one latest pending session.
 
 mod format;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
+#[cfg(all(test, windows))]
+mod windows_tests;
 
 use crate::{interface_state::InterfaceState, profile_storage};
 use resolibre_audio::session::SavedSession;

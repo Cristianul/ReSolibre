@@ -1,21 +1,35 @@
-//! Strict versioned local-session format. Paths retain Unix bytes, not display labels.
+//! Strict versioned local-session format. Platform-tagged paths retain native units, not display labels.
 
 use super::StoredSession;
 use crate::interface_state::InterfaceState;
-use resolibre_audio::session::{MAX_SELECTION_BYTES, SavedSession};
+use crate::path_encoding;
+use resolibre_audio::session::SavedSession;
 use resolibre_core::equalizer::Equalizer;
 use resolibre_core::playback_edges::{FadeMode, PlaybackEdges};
 use resolibre_core::queue::{MAX_QUEUE_ITEMS, RepeatMode};
 use resolibre_core::session::Volume;
-use std::ffi::OsString;
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::PathBuf;
 
-pub(super) const MAX_BYTES: u64 = (MAX_SELECTION_BYTES + MAX_QUEUE_ITEMS * 4 + 133) as u64;
+pub(super) const MAX_BYTES: u64 = (path_encoding::MAX_SELECTION_BYTES
+    + MAX_QUEUE_ITEMS * 4
+    + 133
+    + if cfg!(windows) { 8 } else { 0 }) as u64;
+#[cfg(unix)]
 const MAGIC: &[u8] = b"ReSolibre-Session-4\n";
+#[cfg(windows)]
+const MAGIC: &[u8] = b"ReSolibre-Windows-Session-4\n";
+#[cfg(unix)]
 const V3_MAGIC: &[u8] = b"ReSolibre-Session-3\n";
+#[cfg(windows)]
+const V3_MAGIC: &[u8] = b"ReSolibre-Windows-Session-3\n";
+#[cfg(unix)]
 const V2_MAGIC: &[u8] = b"ReSolibre-Session-2\n";
+#[cfg(windows)]
+const V2_MAGIC: &[u8] = b"ReSolibre-Windows-Session-2\n";
+#[cfg(unix)]
 const LEGACY_MAGIC: &[u8] = b"ReSolibre-Session-1\n";
+#[cfg(windows)]
+const LEGACY_MAGIC: &[u8] = b"ReSolibre-Windows-Session-1\n";
 const INVALID: &str = "Invalid saved session; previous file preserved";
 
 /// Encodes validated intent with length-prefixed paths; never serializes native filter syntax.
@@ -44,7 +58,7 @@ pub(super) fn encode(stored: &StoredSession) -> Result<Vec<u8>, &'static str> {
     );
     bytes.extend((saved.paths.len() as u32).to_le_bytes());
     for path in saved.paths.iter() {
-        let path = path.as_os_str().as_bytes();
+        let path = path_encoding::encode(path.as_os_str());
         bytes.extend((path.len() as u32).to_le_bytes());
         bytes.extend(path);
     }
@@ -110,10 +124,13 @@ pub(super) fn decode(bytes: &[u8]) -> Result<StoredSession, &'static str> {
     for _ in 0..count {
         let length = reader.integer()? as usize;
         total = total.saturating_add(length);
-        if length == 0 || length > 4096 || total > MAX_SELECTION_BYTES {
+        if length == 0
+            || length > path_encoding::MAX_PATH_BYTES
+            || total > path_encoding::MAX_SELECTION_BYTES
+        {
             return Err(INVALID);
         }
-        let path = OsString::from_vec(reader.take(length)?.to_vec());
+        let path = path_encoding::decode(reader.take(length)?).ok_or(INVALID)?;
         paths.push(PathBuf::from(path));
     }
     let edges = if bytes.starts_with(LEGACY_MAGIC) {

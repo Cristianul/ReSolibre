@@ -19,27 +19,27 @@ class BuildChecks(unittest.TestCase):
     """Protect host selection and environment isolation without downloading or launching real audio."""
 
     def test_unsupported_hosts_stop_before_tools(self):
-        """Windows, macOS, unknown systems and Linux ARM produce a clear early failure."""
-        for system, machine in (("Windows", "AMD64"), ("Darwin", "arm64"), ("FreeBSD", "x86_64"), ("Linux", "aarch64")):
+        """macOS, unknown systems and unsupported architectures fail before any tools run."""
+        for system, machine in (("Windows", "ARM64"), ("Darwin", "arm64"), ("FreeBSD", "x86_64"), ("Linux", "aarch64")):
             with self.subTest(system=system, machine=machine):
                 with patch.object(build.platform, "system", return_value=system), patch.object(build.platform, "machine", return_value=machine):
                     with patch.object(build.subprocess, "run") as run, contextlib.redirect_stderr(io.StringIO()) as errors:
                         self.assertEqual(build.main("debug", []), 1)
                         run.assert_not_called()
-                        self.assertIn("Linux x86_64" if system != "Linux" else "requires x86_64", errors.getvalue())
+                        self.assertIn("x86_64", errors.getvalue())
 
     def test_native_environment_preserves_flags_and_paths(self):
         """Keep caller flags and paths; encode checkout names with spaces without shell interpretation."""
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / "checkout with spaces; harmless"
+            root = Path(temporary) / "checkout with spaces"
             library = root / ".local/native/usr/lib64"
             (library / "pkgconfig").mkdir(parents=True)
             original = {"RUSTFLAGS": "-C debuginfo=2", "LD_LIBRARY_PATH": "/existing/lib", "PKG_CONFIG_PATH": "/existing/pc"}
             result = build.build_environment(root, original)
             self.assertEqual(original["RUSTFLAGS"], "-C debuginfo=2")
             self.assertEqual(result["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"), ["-C", "debuginfo=2", "-L", f"native={library}"])
-            self.assertEqual(result["LD_LIBRARY_PATH"], f"{library}:/existing/lib")
-            self.assertEqual(result["PKG_CONFIG_PATH"], f"{library}/pkgconfig:/existing/pc")
+            self.assertEqual(result["LD_LIBRARY_PATH"], f"{library}{os.pathsep}/existing/lib")
+            self.assertEqual(result["PKG_CONFIG_PATH"], f"{library / 'pkgconfig'}{os.pathsep}/existing/pc")
             self.assertNotIn("RUSTFLAGS", result)
             original["CARGO_ENCODED_RUSTFLAGS"] = "--cfg\x1fexisting_flag"
             result = build.build_environment(root, original)
@@ -76,6 +76,78 @@ class BuildChecks(unittest.TestCase):
                     build.main("debug", ["--jobs", value])
                 self.assertEqual(error.exception.code, 2)
                 run.assert_not_called()
+
+    def test_windows_host_and_environment_are_isolated(self):
+        """Accept x64 MSVC only and keep Linux linker paths out of Windows child processes."""
+        build.require_supported_platform("Windows", "AMD64")
+        with patch.object(build.shutil, "which", return_value="rustc.exe"):
+            for host in ("x86_64-pc-windows-msvc", "x86_64-pc-windows-gnu", "aarch64-pc-windows-msvc"):
+                with patch.object(build.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, f"host: {host}")):
+                    if host.endswith("msvc") and host.startswith("x86_64"):
+                        self.assertEqual(build.native_target({}, "Windows"), host)
+                    else:
+                        with self.assertRaises(build.BuildError):
+                            build.native_target({}, "Windows")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".local/native/usr/lib64").mkdir(parents=True)
+            inherited = {"PATH": "owned tools", "RUSTFLAGS": "-C debuginfo=2"}
+            self.assertEqual(build.build_environment(root, inherited, "Windows"), inherited)
+
+    def test_windows_runtime_missing_wrong_architecture_and_staging(self):
+        """Validate all native files before Cargo; stage only beside the chosen executable."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "runtime with spaces"
+            runtime.mkdir()
+            environment = {"RESOLIBRE_NATIVE_DIR": str(runtime)}
+            with self.assertRaisesRegex(build.BuildError, "Missing Windows runtime"):
+                build.windows_runtime(root, environment)
+            header = bytearray(64)
+            header[:2] = b"MZ"
+            header[60:64] = (64).to_bytes(4, "little")
+            payload = bytes(header) + b"PE\0\0\x64\x86"
+            for name in ("libmpv-2.dll", "ffmpeg.exe", "ffprobe.exe"):
+                (runtime / name).write_bytes(payload)
+            files = build.windows_runtime(root, environment)
+            executable = root / "custom output" / "resolibre-desktop.exe"
+            executable.parent.mkdir()
+            build.stage_windows_runtime(files, executable)
+            for source in files:
+                self.assertEqual((executable.parent / source.name).read_bytes(), payload)
+            (runtime / "ffprobe.exe").write_bytes(bytes(header) + b"PE\0\0\x4c\x01")
+            with self.assertRaisesRegex(build.BuildError, "must be x86_64"):
+                build.windows_runtime(root, environment)
+
+    def test_windows_build_failure_never_stages_or_runs(self):
+        """A failed compiler propagates its status and cannot launch a stale executable."""
+        with patch.object(build.platform, "system", return_value="Windows"), patch.object(build.platform, "machine", return_value="AMD64"):
+            with patch.object(build, "require_tool", return_value="cargo.exe"), patch.object(build, "native_target", return_value="x86_64-pc-windows-msvc"):
+                with patch.object(build, "windows_runtime", return_value=[]), patch.object(build, "stage_windows_runtime") as stage:
+                    with patch.object(build.subprocess, "run", side_effect=subprocess.CalledProcessError(23, ["cargo.exe"])) as run:
+                        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(build.main("release", ["--offline", "--run"]), 23)
+                        self.assertEqual(run.call_count, 1)
+                        stage.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == "win32", "requires Windows PowerShell")
+    def test_powershell_entry_from_another_directory_and_failure_exit(self):
+        """Run the real PowerShell wrapper with owned Python entry points and paths containing spaces."""
+        with tempfile.TemporaryDirectory(prefix="resolibre wrapper ") as temporary:
+            root = Path(temporary) / "checkout with spaces; literal"
+            root.mkdir()
+            source = Path(build.__file__).resolve().parents[1]
+            shutil.copyfile(source / "build_windows.ps1", root / "build_windows.ps1")
+            stub = "import json,sys\nfrom pathlib import Path\nprint(json.dumps([Path(__file__).name, sys.argv[1:]]))\nraise SystemExit(23 if '--run' in sys.argv else 0)\n"
+            for profile in ("debug", "release"):
+                (root / f"build_{profile}.py").write_text(stub)
+                command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(root / "build_windows.ps1"),
+                           "-Python", sys.executable, "-Profile", profile, "-Offline", "-Jobs", "2"]
+                result = subprocess.run(command, cwd=temporary, capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), [f"build_{profile}.py", ["--offline", "--jobs", "2"]])
+                failure = subprocess.run(command + ["-Run"], cwd=temporary, capture_output=True, text=True, timeout=20)
+                self.assertEqual(failure.returncode, 23, failure.stderr)
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "owned executable fixtures use Linux shebangs")
     def test_entry_points_run_from_other_directory_and_propagate_failures(self):

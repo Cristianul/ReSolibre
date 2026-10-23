@@ -48,8 +48,8 @@ bounded beat-free cuts affect only the joining edges; internal pauses stay intac
 User-approved speed adjustments are bounded to ±20% per stream. Prefer 1:1;
 otherwise use 1:2, 1:3, 2:3 or inverses with the smallest rate change and align
 shared cycles. Never clamp speed off-grid. Bring both tracks gradually to the
-geometric BPM midpoint: approach over up to six outgoing source seconds before
-overlap, preparing the muted incoming track at that midpoint. Keep matching limits.
+geometric BPM midpoint over up to six source seconds, then hold for one second
+before overlap; prepare the muted incoming track at that midpoint. Keep matching limits.
 Start the six-second return one second before handover; continue afterward.
 Tune approach/lead/duration in core; preserve the shared ratio during overlap
 and freeze on pause. Validate sustained pitch and <=35 ms captured attack alignment;

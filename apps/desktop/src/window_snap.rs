@@ -3,6 +3,10 @@
 pub(crate) mod drag;
 mod geometry;
 mod movement;
+#[cfg(unix)]
+mod x11;
+#[cfg(windows)]
+#[path = "window_snap/windows.rs"]
 mod x11;
 
 use geometry::Rect;
@@ -353,10 +357,11 @@ pub fn present(window: &slint::Window) {
     });
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod native_tests;
 
 /// Selects X11/XWayland for this invocation only, before creating any Slint window.
+#[cfg(unix)]
 pub fn select_x11() -> Result<(), &'static str> {
     use winit::platform::x11::EventLoopBuilderExtX11;
     let mut builder =
@@ -365,4 +370,10 @@ pub fn select_x11() -> Result<(), &'static str> {
     slint::BackendSelector::new().backend_name("winit".into())
         .with_winit_event_loop_builder(builder).select()
         .map_err(|_| "Cannot start X11/XWayland display; launch with --native-display to use the default display")
+}
+
+/// Windows always uses the native display backend.
+#[cfg(windows)]
+pub fn select_x11() -> Result<(), &'static str> {
+    Err("X11 is unavailable on Windows; use --native-display")
 }
