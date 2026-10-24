@@ -27,6 +27,7 @@ export component PlaylistPanel inherits Rectangle {
     // Closing search restores the full list without dispatching a playback command.
     function close-search() { root.search-query = ""; root.search-open = false; queue.focus(); }
     in property <int> current: -1;
+    in property <int> other-current: -1;
     in property <bool> picking;
     in property <bool> closing;
     in property <bool> playing;
@@ -63,7 +64,7 @@ export component PlaylistPanel inherits Rectangle {
                 analysis-state(states, id) => { root.analysis-state(states, id) }
                 analyze(id) => { root.analyze-track(id); }
                 view-analysis(id) => { root.view-track-analysis(id); }
-                tracks: root.tracks; current: root.current; playing: root.playing;
+                tracks: root.tracks; current: root.current; other-current: root.other-current; playing: root.playing;
                 motion-enabled: root.motion-enabled; spectrum: root.spectrum; enabled: !root.closing;
                 scroll <=> root.scroll; selected-id <=> root.selected-id;
                 play(id) => { root.select-track(id); }

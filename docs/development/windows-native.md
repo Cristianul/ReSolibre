@@ -150,3 +150,13 @@ are ignored local inputs, not committed distribution artifacts.
 [Local builds](local-builds.md), [playback](../architecture/features/local-playback.md),
 [session persistence](../architecture/features/session-persistence.md),
 [test plan](../testing/test-plan.md).
+
+## Lossy-source detector
+
+Full analysis embeds the pinned `lossprint` model and CPU-only Rust `tract` runtime;
+no extra ONNX DLL or runtime download is needed. Native build scripts include
+`licenses/lossprint-MIT.txt` and `licenses/tract-MIT.txt` beside the executable.
+See [sampling, resource bounds and test probes](../architecture/features/lossy-source-detection.md).
+
+Detector: GNU cross-build and Wine model/native-decoder probes passed. The new
+feature remains untested on the real MSVC host above.

@@ -8,16 +8,18 @@ use resolibre_core::track_info::{CompressionKind, StreamInfo};
 pub(crate) fn show(window: &crate::PlayerWindow, snapshot: &Snapshot) {
     let show_info = matches!(snapshot.state, SessionState::Playing | SessionState::Paused)
         && snapshot.scanning.is_none()
-        && matches!(snapshot.edge_status, EdgeStatus::Off | EdgeStatus::Ready);
-    let info = snapshot.stream_info.filter(|_| show_info);
+        && (snapshot.display_next
+            || matches!(snapshot.edge_status, EdgeStatus::Off | EdgeStatus::Ready));
+    let incoming = snapshot.audible_next.filter(|_| snapshot.display_next);
+    let info = if show_info {
+        incoming.map_or(snapshot.stream_info, |next| next.stream_info)
+    } else {
+        None
+    };
     let lossless = info.is_some_and(|info| info.codec.compression() == CompressionKind::Lossless);
     let mut text = info
         .map(|info| {
-            let codec = if lossless {
-                "Lossless"
-            } else {
-                info.codec.label()
-            };
+            let codec = info.codec.label();
             let dimensions = dimensions(info);
             if dimensions.is_empty() {
                 codec.to_owned()
@@ -27,16 +29,26 @@ pub(crate) fn show(window: &crate::PlayerWindow, snapshot: &Snapshot) {
         })
         .unwrap_or_default();
     if !text.is_empty() {
-        let report = match &snapshot.analysis {
-            resolibre_audio::session::AnalysisStatus::Complete(report) => Some(&report.tempo),
-            _ => match &snapshot.rhythm {
-                resolibre_audio::session::RhythmStatus::Ready(report) => Some(report.as_ref()),
-                _ => None,
-            },
+        let report = if let Some(incoming) = incoming {
+            snapshot.next_rhythm.as_ref().and_then(|prepared| {
+                snapshot
+                    .tracks
+                    .get(incoming.index)
+                    .filter(|track| track.id == prepared.queue_id)
+                    .map(|_| prepared.report.as_ref())
+            })
+        } else {
+            match &snapshot.analysis {
+                resolibre_audio::session::AnalysisStatus::Complete(report) => Some(&report.tempo),
+                _ => match &snapshot.rhythm {
+                    resolibre_audio::session::RhythmStatus::Ready(report) => Some(report.as_ref()),
+                    _ => None,
+                },
+            }
         };
         if let Some(report) = report {
-            if let Some(bpm) = snapshot
-                .position
+            let position = incoming.map(|next| next.position).or(snapshot.position);
+            if let Some(bpm) = position
                 .or_else(|| (!report.variable).then_some(0.0))
                 .and_then(|seconds| report.bpm_at(seconds))
             {
@@ -44,17 +56,18 @@ pub(crate) fn show(window: &crate::PlayerWindow, snapshot: &Snapshot) {
             } else {
                 text.push_str(" · BPM unavailable");
             }
-        } else if matches!(
-            snapshot.rhythm,
-            resolibre_audio::session::RhythmStatus::Detecting
-        ) {
+        } else if incoming.is_some()
+            || matches!(
+                snapshot.rhythm,
+                resolibre_audio::session::RhythmStatus::Detecting
+            )
+        {
             text.push_str(" · BPM analyzing…");
         } else {
             text.push_str(" · BPM unavailable");
         }
     }
     window.set_lossless(lossless);
-    window.set_technical_details(text.strip_prefix("Lossless · ").unwrap_or("").into());
     window.set_technical_info(text.into());
 }
 
@@ -147,7 +160,7 @@ mod tests {
         show(&window, &snapshot);
         assert_eq!(
             window.get_technical_info(),
-            "Lossless · 48 kHz · Stereo · BPM analyzing…"
+            "FLAC · 48 kHz · Stereo · BPM analyzing…"
         );
         assert!(window.get_lossless());
         snapshot.stream_info.as_mut().unwrap().bits_per_sample = Some(24);
@@ -178,6 +191,38 @@ mod tests {
         snapshot.stream_info = None;
         show(&window, &snapshot);
         assert!(window.get_technical_info().is_empty());
+    }
+
+    /// Next focus uses the incoming stream's facts instead of the outgoing badge.
+    #[test]
+    fn incoming_focus_shows_incoming_facts() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = crate::PlayerWindow::new().unwrap();
+        let snapshot = Snapshot {
+            state: SessionState::Playing,
+            stream_info: Some(StreamInfo {
+                codec: AudioCodec::Flac,
+                ..Default::default()
+            }),
+            audible_next: Some(resolibre_audio::session::AudibleNext {
+                index: 1,
+                position: 2.0,
+                duration: 10.0,
+                gain: 0.3,
+                mix_region: None,
+                seekable: true,
+                stream_info: Some(StreamInfo {
+                    codec: AudioCodec::Mp3,
+                    sample_rate_hz: Some(44100),
+                    ..Default::default()
+                }),
+            }),
+            display_next: true,
+            ..Default::default()
+        };
+        show(&window, &snapshot);
+        assert!(window.get_technical_info().starts_with("MP3 · 44.1 kHz"));
+        assert!(!window.get_lossless());
     }
 
     /// The compiled text binding gives errors priority over a known stream description.
@@ -244,11 +289,13 @@ mod tests {
                 codec: AudioCodec::Flac,
                 ..Default::default()
             }),
-            rhythm: resolibre_audio::session::RhythmStatus::Ready(std::sync::Arc::new(report.clone())),
+            rhythm: resolibre_audio::session::RhythmStatus::Ready(std::sync::Arc::new(
+                report.clone(),
+            )),
             ..Default::default()
         };
         show(&window, &snapshot);
-        assert_eq!(window.get_technical_info(), "Lossless · ≈ 120.0 BPM");
+        assert_eq!(window.get_technical_info(), "FLAC · ≈ 120.0 BPM");
         assert!(window.get_lossless());
         let mut analyzer = resolibre_core::analysis::TrackAnalyzer::new(8000, 1).unwrap();
         analyzer.push(&[0.0; 8000]).unwrap();

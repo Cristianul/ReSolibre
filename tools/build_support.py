@@ -155,6 +155,14 @@ def stage_windows_runtime(files, executable):
             shutil.copy2(source, destination)
 
 
+def stage_detector_licenses(root, executable):
+    """Keep the embedded detector/model and inference-runtime notices beside distributable builds."""
+    destination = executable.parent / "licenses"
+    destination.mkdir(exist_ok=True)
+    for name in ("lossprint-MIT.txt", "tract-MIT.txt"):
+        shutil.copy2(root / "licenses" / name, destination / name)
+
+
 def build_command(cargo, profile, target, offline, jobs):
     """Select the host explicitly so external Cargo target settings cannot cross-compile by accident."""
     command = [cargo, "build", "--locked", "--package", PACKAGE, "--bin", PACKAGE, "--target", target]
@@ -206,6 +214,7 @@ def main(profile, arguments=None):
         subprocess.run(command, cwd=ROOT, env=environment, check=True)
         executable = executable_path(cargo, target, profile, environment)
         stage_windows_runtime(runtime, executable)
+        stage_detector_licenses(ROOT, executable)
         print(f"Built: {executable}", flush=True)
         if options.run:
             return subprocess.run([str(executable)], cwd=ROOT, env=environment, check=False).returncode

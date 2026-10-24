@@ -101,12 +101,7 @@ impl SnapGroup {
                 return;
             };
             let group = group.borrow();
-            if matches!(event, winit::event::WindowEvent::Focused(false) | winit::event::WindowEvent::Destroyed)
-                || matches!(event, winit::event::WindowEvent::KeyboardInput { event, .. }
-                    if event.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape))
-            {
-                group.end_drag();
-            }
+            group.handle_drag_interruption(index, event);
             match event {
                 winit::event::WindowEvent::Moved(_) => group.moved(index),
                 winit::event::WindowEvent::Resized(_) => {
@@ -116,6 +111,18 @@ impl SnapGroup {
                 _ => {}
             }
         });
+    }
+
+    /// A follower losing focus while the player is activated must not cancel its captured drag.
+    fn handle_drag_interruption(&self, index: usize, event: &winit::event::WindowEvent) {
+        let player_lost_focus = self.player == Some(index)
+            && matches!(event, winit::event::WindowEvent::Focused(false));
+        let peer_destroyed = matches!(event, winit::event::WindowEvent::Destroyed);
+        let escape_pressed = matches!(event, winit::event::WindowEvent::KeyboardInput { event, .. }
+            if event.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape));
+        if player_lost_focus || peer_destroyed || escape_pressed {
+            self.end_drag();
+        }
     }
 
     /// Moves the player's attached group or snaps an independently moved auxiliary window.

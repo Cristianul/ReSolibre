@@ -1,6 +1,29 @@
 use super::*;
 use slint::Model;
 
+/// Opening a cached result must not claim a new PCM analysis before any source samples are decoded.
+#[test]
+fn opening_saved_analysis_is_distinct_from_decoding() {
+    i_slint_backend_testing::init_no_event_loop();
+    let window = AnalysisWindow::new().unwrap();
+    window.show().unwrap();
+    let mut host = AnalysisHost {
+        window: Some(window.clone_strong()),
+        generation: Rc::new(Cell::new(Some(7))),
+        source_duration: Some(16.0),
+        ..Default::default()
+    };
+    for (decoded_seconds, prefix) in [(0.0, "Opening analysis"), (1.0, "Analyzing original audio")]
+    {
+        host.refresh(&Snapshot {
+            generation: 7,
+            analysis: AnalysisStatus::Running { decoded_seconds },
+            ..Default::default()
+        });
+        assert!(window.get_status_text().starts_with(prefix));
+    }
+}
+
 /// The tempo lane shares exact source bounds with the plot and exposes unknown gaps and accessible selection.
 #[test]
 fn tempo_lane_shows_measured_regions_and_unknown_gaps() {
@@ -151,7 +174,8 @@ fn result_view_retains_inspected_snapshot() {
     host.refresh(&snapshot);
     assert!(window.get_ready());
     assert!(window.get_tempo_text().contains("120.0 BPM"));
-    assert!(window.get_interpretation().contains("Origin unknown"));
+    assert!(window.get_interpretation().contains("cannot certify"));
+    assert!(window.get_provenance_text().contains("unavailable"));
     assert!(window.get_frequency_note().contains("half the sample rate"));
     assert!(frequency_note(44100).contains("44.1 kHz"));
     assert!(frequency_note(44100).contains("22.05 kHz"));
@@ -269,11 +293,24 @@ fn native_analysis_preview() {
         generation: Rc::new(Cell::new(Some(1))),
         ..Default::default()
     };
+    let mut preview_report = variable_report();
+    Arc::make_mut(&mut preview_report).provenance =
+        resolibre_core::analysis::provenance::ProvenanceReport::Measured {
+            lossy_score: 0.995,
+            minimum_score: 0.99,
+            maximum_score: 1.0,
+            windows: 6,
+        };
     host.refresh(&Snapshot {
         generation: 1,
-        analysis: AnalysisStatus::Complete(variable_report()),
+        analysis: AnalysisStatus::Complete(preview_report),
         ..Default::default()
     });
+    assert!(
+        window
+            .get_provenance_text()
+            .starts_with("Likely lossy source")
+    );
     let weak = window.as_weak();
     let timer = slint::Timer::default();
     timer.start(

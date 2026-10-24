@@ -43,7 +43,7 @@ mod scan_capture_tests;
 #[cfg(all(test, unix))]
 mod output_failure_tests;
 
-#[cfg(all(test, target_env = "gnu"))]
+#[cfg(all(test, unix, target_env = "gnu"))]
 mod responsiveness_tests;
 
 use resolibre_core::{PlaybackEvent, SeekPosition};

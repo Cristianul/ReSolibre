@@ -18,13 +18,15 @@ tags. Display `Artist – Title`, title alone when artist is absent, or the sani
 filename when title is absent/unreadable. Case-insensitive keys, Unicode, control/
 bidi neutralization and 160 characters per field apply. Both views share labels; paths/order/playback are unchanged.
 
-One cancellable job prioritizes the selected occurrence. Only its embedded attached
+One cancellable job prioritizes the selected occurrence, then the prepared MIX
+incoming occurrence. Only their embedded attached
 picture is decoded; ordinary video frames, folder images and remote artwork are
 excluded. The square cover uses centered fill; missing/rejected images retain the
 forest illustration. Changing/reopening an occurrence marks its new cover pending;
-the UI retains the last image until a definitive cover or missing-art result, so
-the fallback never flashes between covers. Accessibility reports loading during
-this handover. Removing the last track clears it. Stale results never become
+the UI retains the last image until a definitive cover or missing-art result on
+ordinary handover. During Next focus in an overlap, it shows the incoming cover
+or its loading fallback immediately. Accessibility reports loading during
+probing. Removing the last track clears it. Stale results never become
 another track's cover. Pause/Stop retain the selected cover; restore never autoplays.
 
 `ffprobe` and `ffmpeg` run with descriptor-only input, allowlisted demuxers, no
@@ -34,7 +36,7 @@ Regular files only; symlinks/FIFOs are rejected. Both phases share a 3 s deadlin
 32 MiB native per-allocation limit (not a process RSS cap). Probe JSON is capped
 at 64 KiB; source pictures at 4096 px per side and 4,194,304 pixels. Result RGBA is
 512² / 1 MiB. File identity/size/change timestamps must match after inspection.
-Only current cover bytes (plus the previous UI image during handover) and at most
+Only current and prepared-next cover bytes (plus the previous UI image during handover) and at most
 1024 bounded labels/search records survive in memory.
 Reopening re-probes that source; edits to unselected files await re-add/reopen.
 Unavailable helpers/media use fallbacks, with one sanitized warning per session.
@@ -82,7 +84,7 @@ Isolated software UI: first X11 window mapped in 589 ms; idle X11/Wayland
 
 ## Edge Cases
 
-Duplicate paths have separate IDs; only current cover is retained.
+Duplicate paths have separate IDs; the next cover is retained only while MIX prepares it.
 Oversized tags can reject the probe entirely; cover decode failure preserves valid
 tags. Only the first usable attached picture is selected. Helpers are existing
 FFmpeg prerequisites; serde_json reuses the pinned workspace version. Missing

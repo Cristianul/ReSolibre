@@ -15,6 +15,7 @@ export component QueueView inherits FocusScope {
     callback analyze(string);
     callback view-analysis(string);
     in property <int> current: -1;
+    in property <int> other-current: -1;
     in property <bool> playing;
     in property <bool> motion-enabled: true;
     in property <bool> spectrum;
@@ -125,7 +126,8 @@ export component QueueView inherits FocusScope {
         for track[index] in root.tracks: QueueRow {
             analysis-status: root.analysis-state(root.analysis-states, track.id);
             title: track.title; duration: track.duration; number: track.number;
-            selected: root.selected-id == track.id; current: root.current == index;
+            selected: root.selected-id == track.id;
+            current: root.current == index || root.other-current == index;
             playing: root.playing; motion-enabled: root.motion-enabled && !root.dragging; spectrum: root.spectrum;
             hovered: touch.has-hover && root.row-at(touch.mouse-y) == index;
             in-view: self.y + root.scroll + self.height > 0px && self.y + root.scroll < root.height;

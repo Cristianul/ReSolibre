@@ -134,6 +134,16 @@ impl Worker {
         } else {
             None
         };
+        self.snapshot.audible_next = if self.snapshot.mix_enabled {
+            self.mixing.audible_next(&self.queue)
+        } else {
+            None
+        };
+        self.metadata
+            .preview(self.mixing.incoming_id(), &mut self.snapshot);
+        if self.snapshot.audible_next.is_none() {
+            self.snapshot.display_next = false;
+        }
         self.snapshot.trim_start = self.edges.region.map_or(0.0, |region| region.start);
         self.snapshot.trim_end = self.edges.region.map(|region| region.end);
         self.snapshot.saved.current = self.queue.current();
@@ -148,11 +158,14 @@ impl Worker {
         self.snapshot.saved.repeat = self.queue.repeat();
         self.snapshot.shuffle = self.queue.shuffle();
         self.snapshot.repeat = self.queue.repeat();
-        self.snapshot.can_next = self.queue.can_advance(Advance::Next);
+        self.snapshot.can_next = self.snapshot.audible_next.is_some()
+            && !self.snapshot.display_next
+            || (self.snapshot.audible_next.is_none() && self.queue.can_advance(Advance::Next));
         let restarts = self.can_restart_previous();
         let has_previous = self.queue.can_advance(Advance::Previous);
-        self.snapshot.can_previous = restarts || has_previous;
-        self.snapshot.previous_navigates = !restarts && has_previous;
+        self.snapshot.can_previous = self.snapshot.display_next || restarts || has_previous;
+        self.snapshot.previous_navigates =
+            self.snapshot.display_next || (!restarts && has_previous);
         *self
             .shared
             .snapshot
@@ -256,7 +269,10 @@ impl Worker {
                 if self.player.is_some() {
                     self.paused = !self.paused;
                     if self.loaded
-                        && !self.edges.waiting_for_start()
+                        && matches!(
+                            self.snapshot.state,
+                            SessionState::Playing | SessionState::Paused
+                        )
                         && let Some(player) = self.player.as_mut()
                     {
                         player.set_paused(self.paused).map_err(|e| e.to_string())?;
@@ -291,13 +307,40 @@ impl Worker {
                 self.snapshot.position = Some(0.0);
                 self.snapshot.seekable = false;
             }
-            Command::Next => self.navigate(Advance::Next)?,
-            Command::Previous => self.previous()?,
+            Command::Next => {
+                if self.snapshot.audible_next.is_some() {
+                    self.snapshot.display_next = true;
+                } else {
+                    self.navigate(Advance::Next)?;
+                }
+            }
+            Command::Previous => {
+                if self.snapshot.display_next && self.snapshot.audible_next.is_some() {
+                    self.snapshot.display_next = false;
+                } else {
+                    self.previous()?;
+                }
+            }
             Command::Seek {
                 generation,
                 seconds,
             } => {
-                if generation == self.snapshot.generation && self.loaded && self.snapshot.seekable {
+                if generation == self.snapshot.generation && self.loaded {
+                    let target =
+                        SeekPosition::from_seconds(seconds).ok_or("Invalid seek position")?;
+                    if self.snapshot.display_next {
+                        if !self.snapshot.audible_next.is_some_and(|next| next.seekable) {
+                            return Ok(());
+                        }
+                        if !self
+                            .promote_mix_for_seek()
+                            .map_err(|error| error.to_string())?
+                        {
+                            return Ok(());
+                        }
+                    } else if !self.snapshot.seekable {
+                        return Ok(());
+                    }
                     self.previous_restart_requested = None;
                     self.end_scan().map_err(|error| error.to_string())?;
                     let Some(player) = self.player.as_mut() else {
@@ -306,8 +349,6 @@ impl Worker {
                     // duration may be a growing demuxer estimate (stream-encoded FLAC).
                     // Clamping here would turn a 103 s seek into a seek near the start.
                     // The UI bounds its slider; the native engine resolves absolute EOF.
-                    let target =
-                        SeekPosition::from_seconds(seconds).ok_or("Invalid seek position")?;
                     player
                         .seek_with_equalizer(target, self.snapshot.equalizer)
                         .map_err(|e| e.to_string())?;
@@ -317,7 +358,7 @@ impl Worker {
                 generation,
                 direction,
             } => {
-                if generation == self.snapshot.generation {
+                if generation == self.snapshot.generation && !self.snapshot.display_next {
                     self.previous_restart_requested = None;
                     // A release remains valid when format reconfiguration hides seek capability.
                     if direction.is_none() {
@@ -582,28 +623,50 @@ impl Worker {
             );
         if ready {
             self.analysis
+                .request_automatic(&self.queue, &mut self.snapshot);
+            self.analysis
                 .prioritize_current(&self.queue, &mut self.snapshot);
         }
+        let mixing_audibly = self.mixing.controls_gain();
+        if mixing_audibly {
+            // The two live streams own the decoder budget until handover.
+            self.analysis.yield_to_current(&mut self.snapshot);
+        }
         let current_priority = ready
+            && !mixing_audibly
             && self
                 .rhythm
                 .current_priority(&self.queue, &mut self.snapshot);
-        if current_priority {
+        let lookahead_priority = ready
+            && !mixing_audibly
+            && self
+                .rhythm
+                .lookahead_priority(&self.queue, &mut self.snapshot);
+        let rhythm_priority = current_priority || lookahead_priority;
+        if rhythm_priority {
             self.analysis.yield_to_current(&mut self.snapshot);
         }
-        let full_analysis_waiting = if current_priority {
+        let full_analysis_waiting = if rhythm_priority {
             self.analysis.has_worker()
         } else {
             self.analysis.wants_worker()
         };
-        let rhythm_player = if ready { self.player.as_mut() } else { None };
+        let rhythm_player = if ready && !mixing_audibly {
+            self.player.as_mut()
+        } else {
+            None
+        };
         self.rhythm.tick(
             rhythm_player,
             &self.queue,
             &mut self.snapshot,
             full_analysis_waiting,
         );
-        let available = !self.rhythm.busy() && !current_priority;
+        let available = !self.rhythm.busy() && !rhythm_priority && !mixing_audibly;
+        if ready && available && self.snapshot.mix_enabled {
+            self.analysis
+                .prioritize_next(&self.queue, &mut self.snapshot);
+        }
         let analysis_player = if ready && available {
             self.player.as_mut()
         } else {
@@ -702,11 +765,7 @@ impl Worker {
             return Ok(());
         }
         self.audio_wait_started = None;
-        if !self.edges.prepare(player, &mut self.snapshot)? {
-            self.snapshot.state = SessionState::Loading;
-            self.snapshot.seekable = false;
-            return Ok(());
-        }
+        self.edges.prepare(player, &mut self.snapshot)?;
         if player.equalizer_rate() == 0 {
             // Initial TRIM or an excluded live edge sought; wait for its replacement graph.
             self.check_audio_wait();

@@ -20,6 +20,20 @@ opt-level = 3
 [profile.dev.package.rustfft]
 opt-level = 3
 
+# Unoptimized hashing can exhaust the cache identity deadline on ordinary song-sized files.
+[profile.dev.package.sha2]
+opt-level = 3
+
+# CPU inference must also remain usable in the development player.
+[profile.dev.package.lossprint]
+opt-level = 3
+[profile.dev.package.tract-core]
+opt-level = 3
+[profile.dev.package.tract-linalg]
+opt-level = 3
+[profile.dev.package.tract-data]
+opt-level = 3
+
 # Optimize local production builds while retaining Rust's normal panic recovery behavior.
 [profile.release]
 opt-level = 3

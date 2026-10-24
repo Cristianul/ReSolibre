@@ -35,7 +35,8 @@ python3 -m unittest discover -s tools -p 'test_mix_pitch.py' -v
 
 Tests preserve original bytes/metadata, reject invalid native speed inputs and
 ignore hostile external configuration/scripts. Child lifetimes and output files
-are bounded. The native session suite also covers pause, seeking, MIX-off before
+are bounded. The MIX worker permits up to 16 MiB per file for automatic full-report
+cache writes; captured PCM and diagnostics retain separate 2 MiB checks. The native session suite also covers pause, seeking, MIX-off before
 and during overlap, handover and scanning after MIX. `check_pcm_conversion.py`
 requires ordinary session PCM and bundled taps to remain byte-identical to their
 controls, alongside conversion and malformed-input checks.

@@ -10,6 +10,8 @@ resolibre-storage = { path = "../resolibre-storage" }
 serde_json = "=1.0.154"
 libc = "=0.2.191"
 libloading = "=0.8.9"
+lossprint = { version = "=1.1.0", default-features = false }
+tempfile = "=3.27.0"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_IO", "Win32_System_Threading", "Win32_Security", "Win32_Security_Cryptography"] }

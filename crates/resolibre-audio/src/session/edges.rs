@@ -5,6 +5,7 @@ use crate::{
     edge_analysis::{AnalysisJob, SourceKey},
 };
 use resolibre_core::playback_edges::{EdgeAnalysis, PlaybackEdges, PlaybackRegion};
+use resolibre_core::session::SessionState;
 use std::collections::VecDeque;
 
 #[derive(Default)]
@@ -31,14 +32,14 @@ impl EdgeRuntime {
         self.region = None;
     }
 
-    /// Waits without blocking the playback worker; incomplete results never reach timing or DSP.
+    /// Measures without pausing playback; reports whether final bounds are ready for MIX planning.
     pub fn prepare(
         &mut self,
         player: &mut LocalPlayer,
         snapshot: &mut Snapshot,
     ) -> Result<bool, PlaybackError> {
         let settings = snapshot.edges;
-        let preparing_start = self.waiting_for_start();
+        let preparing_start = snapshot.state == SessionState::Loading;
         if !settings.needs_analysis() {
             self.job = None;
             self.unavailable = false;
@@ -51,15 +52,12 @@ impl EdgeRuntime {
             }
             return Ok(true);
         }
-        if self.analysis.is_none() && !self.unavailable && self.job.is_none() {
-            // An already-started track keeps playing while its first analysis runs.
-            if preparing_start {
-                player.set_paused(true)?;
-                self.resume_needed = true;
-            }
-            if self.start(player).is_err() {
-                self.mark_unavailable();
-            }
+        if self.analysis.is_none()
+            && !self.unavailable
+            && self.job.is_none()
+            && self.start(player).is_err()
+        {
+            self.mark_unavailable();
         }
         if let Some(result) = self.job.as_mut().and_then(AnalysisJob::poll) {
             self.job = None;
@@ -78,7 +76,7 @@ impl EdgeRuntime {
         }
         if self.job.is_some() {
             snapshot.edge_status = EdgeStatus::Pending;
-            return Ok(!preparing_start);
+            return Ok(false);
         }
         snapshot.edge_status = if self.unavailable {
             EdgeStatus::Unavailable
@@ -92,15 +90,15 @@ impl EdgeRuntime {
                 snapshot.equalizer,
                 preparing_start,
             )?;
+            if let Some(region) = self.region {
+                snapshot.position = snapshot
+                    .position
+                    .map(|position| position.clamp(region.start, region.end));
+            }
             self.applied = Some(settings);
             self.resume_needed = true;
         }
         Ok(true)
-    }
-
-    /// Initial processing must finish before first resume; live analysis never blocks transport.
-    pub fn waiting_for_start(&self) -> bool {
-        self.applied.is_none()
     }
 
     /// Keeps the UI timeline on the original file, including yellow skipped regions.

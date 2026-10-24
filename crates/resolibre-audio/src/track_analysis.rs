@@ -1,5 +1,7 @@
 //! One cancellable original-stream analysis job; no source path or native diagnostic is published.
 
+mod provenance;
+
 use crate::original_audio::{self, SourceKey};
 use resolibre_core::analysis::{TrackAnalysis, TrackAnalyzer};
 use std::fs::File;
@@ -137,12 +139,19 @@ impl TrackJob {
                 if worker_cancel.load(Ordering::Relaxed) {
                     return Err(UNAVAILABLE);
                 }
-                let report = analyzer
+                let mut report = analyzer
                     .ok_or(UNAVAILABLE)?
                     .finish()
                     .map_err(|_| UNAVAILABLE)?;
                 if !crate::analysis_cache::unchanged(&retained, key, &worker_cancel) {
                     return Err(UNAVAILABLE);
+                }
+                report.provenance = provenance::analyze(&retained, key, &report, &worker_cancel);
+                if !crate::analysis_cache::unchanged(&retained, key, &worker_cancel) {
+                    return Err(UNAVAILABLE);
+                }
+                if report.provenance == resolibre_core::analysis::provenance::ProvenanceReport::Unavailable {
+                    eprintln!("warn: lossy-source detection unavailable; retaining spectral and tempo analysis");
                 }
                 if let Some(cached) = &mut cached
                     && cached

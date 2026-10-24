@@ -6,7 +6,7 @@ use crate::{
     original_audio::SourceKey,
     track_analysis::{TrackInput, TrackJob},
 };
-use resolibre_core::queue::Queue;
+use resolibre_core::queue::{Advance, Queue, RepeatMode};
 use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
 #[derive(Clone, Debug, Default)]
@@ -61,6 +61,9 @@ pub(super) struct AnalysisRuntime {
     cache_status: Option<crate::analysis_cache::status::StatusJob>,
     cache_checked: std::collections::HashSet<u64>,
     requested: std::collections::HashSet<u64>,
+    automatic_current: Option<(u64, u64)>,
+    automatic_next: Option<(u64, u64)>,
+    automatic_order: Option<(u64, u64, bool, RepeatMode)>,
 }
 
 impl AnalysisRuntime {
@@ -122,6 +125,81 @@ impl AnalysisRuntime {
             .pending
             .iter()
             .position(|request| request.id == current)
+            && let Some(request) = self.pending.remove(index)
+        {
+            self.pending.push_front(request);
+        }
+    }
+
+    /// Rechecks cached full reports once per playback generation, decoding only missing or changed audio.
+    pub(super) fn request_automatic(&mut self, queue: &Queue<PathBuf>, snapshot: &mut Snapshot) {
+        let Some(current) = queue.current_id() else {
+            return;
+        };
+        let current_target = (snapshot.generation, current);
+        if self.automatic_current != Some(current_target) {
+            self.automatic_current = Some(current_target);
+            self.enqueue(current, false, false, snapshot);
+        }
+
+        if !snapshot.mix_enabled {
+            return;
+        }
+        let order = (
+            snapshot.generation,
+            snapshot.queue_revision,
+            queue.shuffle(),
+            queue.repeat(),
+        );
+        if self.automatic_order == Some(order) {
+            return;
+        }
+        self.automatic_order = Some(order);
+        let previous_next = self.automatic_next.take();
+        let mut lookahead = queue.clone();
+        let Some(index) = lookahead.advance(Advance::Ended) else {
+            return;
+        };
+        let next = lookahead.entries()[index].id;
+        let next_target = (snapshot.generation, next);
+        if next != current {
+            self.automatic_next = Some(next_target);
+            if previous_next != Some(next_target) {
+                self.enqueue(next, false, false, snapshot);
+            }
+        }
+    }
+
+    /// Starts the MIX lookahead full report after current work and before unrelated library jobs.
+    pub(super) fn prioritize_next(&mut self, queue: &Queue<PathBuf>, snapshot: &mut Snapshot) {
+        let Some(current) = queue.current_id() else {
+            return;
+        };
+        if self.pending.iter().any(|request| request.id == current)
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.request.id == current)
+        {
+            return;
+        }
+        let Some((generation, next)) = self.automatic_next else {
+            return;
+        };
+        if generation != snapshot.generation
+            || next == current
+            || !self.pending.iter().any(|request| request.id == next)
+        {
+            return;
+        }
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.request.id != next)
+        {
+            self.yield_to_current(snapshot);
+        }
+        if let Some(index) = self.pending.iter().position(|request| request.id == next)
             && let Some(request) = self.pending.remove(index)
         {
             self.pending.push_front(request);
@@ -671,5 +749,50 @@ mod tests {
             runtime.pending.len(),
             resolibre_core::queue::MAX_QUEUE_ITEMS
         );
+    }
+
+    /// Automatic work follows real queue order and elevates current, then MIX next, above batch rows.
+    #[test]
+    fn automatic_analysis_prioritizes_current_then_mix_lookahead() {
+        let mut queue = Queue::with_seed(42);
+        queue.append(vec![
+            PathBuf::from("first.wav"),
+            PathBuf::from("second.wav"),
+            PathBuf::from("third.wav"),
+        ]);
+        queue.select(0);
+        let ids: Vec<_> = queue.entries().iter().map(|entry| entry.id).collect();
+        let mut snapshot = Snapshot::default();
+        let mut runtime = AnalysisRuntime::default();
+        runtime.request_track(&queue, &mut snapshot, ids[2]);
+        runtime.request_automatic(&queue, &mut snapshot);
+        assert!(snapshot.library_analysis.contains_key(&ids[0]));
+        assert!(!snapshot.library_analysis.contains_key(&ids[1]));
+        runtime.prioritize_current(&queue, &mut snapshot);
+        assert_eq!(runtime.pending.front().unwrap().id, ids[0]);
+
+        snapshot.mix_enabled = true;
+        runtime.request_automatic(&queue, &mut snapshot);
+        assert_eq!(runtime.pending.len(), 3);
+        runtime.pending.pop_front();
+        runtime.prioritize_next(&queue, &mut snapshot);
+        assert_eq!(runtime.pending.front().unwrap().id, ids[1]);
+        assert_eq!(runtime.pending.back().unwrap().id, ids[2]);
+
+        assert!(queue.move_adjacent(ids[1], true));
+        snapshot.queue_revision += 1;
+        runtime.request_automatic(&queue, &mut snapshot);
+        runtime.prioritize_next(&queue, &mut snapshot);
+        assert_eq!(runtime.pending.front().unwrap().id, ids[2]);
+
+        runtime.cancel(&mut snapshot);
+        mark(&mut snapshot, ids[0], LibraryAnalysisStatus::Complete);
+        let mut fresh = AnalysisRuntime::default();
+        snapshot.mix_enabled = false;
+        fresh.request_automatic(&queue, &mut snapshot);
+        fresh.request_automatic(&queue, &mut snapshot);
+        assert_eq!(fresh.pending.len(), 1);
+        assert_eq!(fresh.pending.front().unwrap().id, ids[0]);
+        assert!(!fresh.pending.front().unwrap().force);
     }
 }

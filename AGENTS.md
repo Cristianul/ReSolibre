@@ -89,6 +89,6 @@ push without authorization. Check staging and ignores before reporting.
 ## Commit messages
 
 When authorized, use Conventional Commits: `<type>[optional scope][!]: <summary>`.
-Describe staged outcomes in plain language; body: what/why, checks and limits.
-Explain jargon, distinguish planned from working features, omit conversation and
-abandoned plans. Relevant jokes are welcome, except around failures or security.
+Use `- ` bullets in the body for staged changes, reasons, checks and limits.
+Explain jargon in plain language; distinguish planned from working features.
+Omit conversation and abandoned plans. No jokes about failures or security.

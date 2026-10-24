@@ -166,7 +166,8 @@ mod tests {
             session::{Command, Session},
         };
         crate::window_snap::select_x11().unwrap();
-        let directory = std::env::temp_dir().join(format!("resolibre-live-ui-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("resolibre-live-ui-{}", std::process::id()));
         std::fs::create_dir(&directory).unwrap();
         let path = crate::ui_tests::write_ui_fixture(&directory);
         let mut bytes = std::fs::read(&path).unwrap();

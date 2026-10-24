@@ -5,6 +5,7 @@ from array import array
 import argparse
 from pathlib import Path
 import re
+import resource
 import statistics
 import math
 import tempfile
@@ -15,6 +16,13 @@ from check_pcm_conversion import build_worker, snapshot
 from private_audio import PrivateAudio
 from pcm_signal import require
 from responsiveness_probe import read_usage
+
+
+def limit_mix_worker_files():
+    """Allow bounded full-analysis SQLite writes while raw audio and logs keep their 2 MiB checks."""
+    maximum = 16 * 1024 * 1024
+    resource.setrlimit(resource.RLIMIT_FSIZE, (maximum, maximum))
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def fixture(path, bpm, channel, edge=1, tonal=False, duration=24, rate=48000, sparse=False):
@@ -126,7 +134,8 @@ def trial(directory, binary, outgoing_bpm, incoming_bpm, missing_clock=False, tr
         capture = None
         worker = audio.start(['env', 'MALLOC_MMAP_THRESHOLD_=131072',
                               'GLIBC_TUNABLES=glibc.malloc.mmap_threshold=131072',
-                              *(['PIPEWIRE_CONFIG_NAME=native-client.conf'] if pipewire else []), str(binary), '--ignored', '--exact', 'mix_capture_tests::capture_mix', '--nocapture'])
+                              *(['PIPEWIRE_CONFIG_NAME=native-client.conf'] if pipewire else []), str(binary), '--ignored', '--exact', 'mix_capture_tests::capture_mix', '--nocapture'],
+                             file_limit=limit_mix_worker_files)
         deadline = time.monotonic() + (70 if long else 40)
         linked = set()
         peak_rss = 0.0

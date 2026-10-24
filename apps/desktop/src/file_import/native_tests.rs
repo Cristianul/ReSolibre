@@ -161,7 +161,8 @@ impl DragSource {
 #[ignore = "requires isolated X11/XWayland; run through tools/check_window_snap.py"]
 fn native_drop_journey() {
     crate::window_snap::select_x11().unwrap();
-    let directory = std::env::temp_dir().join(format!("resolibre-native-drop-{}", std::process::id()));
+    let directory =
+        std::env::temp_dir().join(format!("resolibre-native-drop-{}", std::process::id()));
     std::fs::create_dir(&directory).unwrap();
     let album = directory.join("Album 音楽");
     std::fs::create_dir(&album).unwrap();

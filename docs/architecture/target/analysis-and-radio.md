@@ -1,8 +1,7 @@
 # Analysis and radio target
 
 Status: partially implemented. Spectral/tempo analysis works on Linux; Track
-Radio and genre inference need experiments. Internet radio is separate from
-generating a queue of similar library tracks. A [live spectrum](../features/live-spectrum.md)
+Radio and genre inference need experiments. Internet radio and similar-track queues are distinct. A [live spectrum](../features/live-spectrum.md)
 uses shared STFT; [full-track analysis/BPM](../features/track-analysis.md) works on Linux.
 
 ## Useful audio diagnostics
@@ -19,8 +18,11 @@ Keep lossless encoding distinct from original provenance: a FLAC container can
 hold audio previously transcoded lossily. A cutoff alone cannot prove provenance.
 Use suspected/inconclusive results and provenance unknown unless verified; never
 issue an unsupported "true lossless" badge. Record whether analysis concerns the
-original file or a server-transcoded representation. This is not a decorative
-MilkDrop/3D visualizer feature.
+original file or a server-transcoded representation. This is audio diagnosis.
+
+Approved, 2026-10-24: [lossy-source detection](../features/lossy-source-detection.md)
+uses pinned offline lossprint, including Windows. Preserve uncertainty; measure
+resources and integration accuracy separately from upstream benchmarks.
 
 Approved UI: lossless-encoding badge and measured local BPM below the title; one full-analysis button appears
 on artwork hover/keyboard focus and opens a grouped window with clear
@@ -85,12 +87,10 @@ explicitly invalidate/rebuild affected incompatible results in the application
 upgrade path; code history alone cannot identify which algorithm produced a
 particular installed cache. Source modification data is not an integrity proof.
 
-Keeping selected older algorithms as user-selectable options is an open future
-possibility, not a promise to preserve every implementation forever. Evaluate
+Selectable older algorithms remain an uncommitted future option. Evaluate
 quality, maintenance, security, licenses and resource cost before adding a choice.
 If multiple algorithms coexist, distinguish their result provenance and prevent
 mixing incompatible features/embeddings; decide the minimal storage contract then.
-Git preserves development history, not runtime compatibility or cache validity.
 
 ## Intelligent Track Radio
 
@@ -100,12 +100,20 @@ features and trustworthy genre metadata. Evaluate suitable existing Rust librari
 and compatible offline models/native adapters; do not train a large model from
 scratch or assume inference must be reimplemented per platform.
 
-Estimate BPM from repeated onset/energy changes, separately from the live display.
-Approved: use stable track tempo to recover sparse notes when their measured
-attacks support its phase. Keep contextual estimates distinct from verified beats;
-never fill silence or force real tempo changes onto a fixed grid. Validate weak
-beats and half/double ambiguity; allow unknown results. The focused plan implements
-BPM/beat analysis; transitions belong to [MIX](../features/dj-mix.md).
+Estimate BPM separately from the live display. Approved, 2026-10-24: combine energy,
+short multiband spectra and longer bass analysis with bounded whole-track alternatives.
+Verifying an independent anchor needs less evidence than finding a new tempo:
+direct recurrence or locally fitted phase with held-out note/subdivision support.
+Offbeat notes may confirm tempo without beat phase. Adjacent independent regions may establish a different tempo;
+metrical relatives alone remain ambiguous. A soft preference must not override
+convincing changes or force silence/unsupported noise onto a fixed tempo.
+
+Delayed spectral timing cannot supply precise beats. Original-source attacks may
+enrich the same contextual interval at lower confidence, never invent timestamps.
+Context alone cannot authorize MIX synchronization. Preserve unknown regions and
+evaluate false variability, metrical ambiguity and phase separately; spectral-only
+half/double changes may remain ambiguous. The bounded offline [implementation](../features/track-analysis.md)
+retains learned trackers as comparison candidates. [MIX](../features/dj-mix.md) owns transitions.
 
 Detailed styles such as melodic/minimal techno, progressive/deep/tech house are
 desired distinctions, inspired by Every Noise at Once and Chosic. These are not

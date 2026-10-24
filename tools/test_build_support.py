@@ -18,6 +18,18 @@ import build_support as build
 class BuildChecks(unittest.TestCase):
     """Protect host selection and environment isolation without downloading or launching real audio."""
 
+    def test_detector_notices_accompany_native_builds(self):
+        """The embedded model's MIT notice must not depend on a network download or the source tree at runtime."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "licenses").mkdir()
+            (root / "output").mkdir()
+            for name in ("lossprint-MIT.txt", "tract-MIT.txt"):
+                (root / "licenses" / name).write_text("owned notice fixture", encoding="utf-8")
+            build.stage_detector_licenses(root, root / "output" / "player.exe")
+            for name in ("lossprint-MIT.txt", "tract-MIT.txt"):
+                self.assertEqual((root / "output" / "licenses" / name).read_text(), "owned notice fixture")
+
     def test_unsupported_hosts_stop_before_tools(self):
         """macOS, unknown systems and unsupported architectures fail before any tools run."""
         for system, machine in (("Windows", "ARM64"), ("Darwin", "arm64"), ("FreeBSD", "x86_64"), ("Linux", "aarch64")):
@@ -158,6 +170,7 @@ class BuildChecks(unittest.TestCase):
             source = Path(build.__file__).resolve().parents[1]
             for name in ("build_debug.py", "build_release.py", "tools/build_support.py"):
                 shutil.copyfile(source / name, root / name)
+            shutil.copytree(source / "licenses", root / "licenses")
             (root / ".local/native/usr/lib64/pkgconfig").mkdir(parents=True)
             (root / ".local/native/usr/lib64/libmpv.so").write_bytes(b"owned library fixture")
             binaries = Path(temporary) / "owned-tools"

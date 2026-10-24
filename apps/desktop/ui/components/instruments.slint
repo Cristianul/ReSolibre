@@ -180,6 +180,11 @@ export component LinearSliderFace inherits Rectangle {
         y: (root.height - 12px) / 2;
         width: 2px; height: 12px; background: Theme.mix-region;
     }
+    if !root.vertical && root.mix-end > root.mix-start: Rectangle {
+        x: 9px + max(0px, root.width - 20px) * clamp(root.mix-end, 0, 1);
+        y: (root.height - 12px) / 2;
+        width: 2px; height: 12px; background: Theme.mix-region;
+    }
     Rectangle {
         x: root.vertical ? (parent.width - 18px) / 2 : 2px + (parent.width - 16px) * root.fraction;
         y: root.vertical ? (parent.height - 26px) * (1 - root.fraction) : (parent.height - 12px) / 2;

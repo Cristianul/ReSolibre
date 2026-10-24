@@ -17,7 +17,8 @@ impl Fixture {
     /// Creates a unique directory without touching user music or profile data.
     fn new() -> Self {
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("resolibre-import-{}-{id}", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("resolibre-import-{}-{id}", std::process::id()));
         std::fs::create_dir(&path).unwrap();
         Self(path)
     }

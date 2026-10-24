@@ -62,8 +62,10 @@ fn containers_play_audio_only_and_preserve_sources() {
         ),
     ];
     for (extension, contents, has_audio) in fixtures {
-        let path =
-            std::env::temp_dir().join(format!("resolibre-media-{}.{extension}", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "resolibre-media-{}.{extension}",
+            std::process::id()
+        ));
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)

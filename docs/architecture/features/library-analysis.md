@@ -55,8 +55,15 @@ Only small status observations reach the session, never a library of retained pl
 One scheduler owns full analysis, with only one decoder active. Background batches
 yield between files to automatic current/next rhythm preparation. Playback navigation
 cancels/reaps the batch job and resumes it after current-track work. Current rhythm
-(excerpt then full timeline) has highest analysis priority, followed by a requested
-current plot; it overtakes other queued/running Library plots. Transport stays independent. Stop cancels pending
+(excerpt then full timeline) has highest analysis priority. Starting playback
+automatically queues a full report check for the current occurrence; enabling
+MIX also queues the actual next occurrence. Cached completed reports are reused.
+Each playback generation revalidates the retained source before reuse, so a
+replaced recording at the same queue occurrence cannot keep an old result.
+Current full analysis runs before next full analysis, and both overtake unrelated
+Library batches after rhythm preparation. Full jobs yield while two streams
+overlap, then resume after handover. A requested current plot retains its
+foreground priority. Transport stays independent. Stop cancels pending
 analysis; closing the diagnostics window cancels only its own explicit request.
 Batch work continues if Library is hidden. Shutdown cancels and reaps owned workers.
 
@@ -104,7 +111,8 @@ bar growth/shrinkage and static reduced-motion, minimized, queued and finished s
 Stop/inspection regressions cover idle analysis, independent library results, retry
 identity and removed IDs. Production UI wiring and pointer tests verify stopped
 artwork access, badge clicks with duplicate titles/filtered rows, and unchanged
-selection, playback and source bytes. Repeated inspection keeps forced retries fresh.
+selection, playback and source bytes. Repeated inspection keeps forced retries fresh. A MIX-handover regression checks
+that reopening the previous badge reads its saved report without decoding again.
 
 Badge verification (2026-10-23): targeted regressions, storage tests, Clippy and three
 native Library previews (X11 1x/2x, Wayland) passed. The full workspace run still fails

@@ -91,7 +91,8 @@ fn native_prepared_startup() {
     crate::window_snap::select_x11().unwrap();
     let main = PlayerWindow::new().unwrap();
     main.set_initializing(true);
-    let session = resolibre_audio::session::Session::start(resolibre_audio::AudioOutput::Silent).unwrap();
+    let session =
+        resolibre_audio::session::Session::start(resolibre_audio::AudioOutput::Silent).unwrap();
     let controller = Rc::new(RefCell::new(crate::presentation::Controller::new(session)));
     crate::presentation::connect(&main, &controller);
     crate::interface_state::InterfaceState {

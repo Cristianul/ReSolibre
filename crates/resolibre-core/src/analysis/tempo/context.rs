@@ -93,6 +93,21 @@ pub(super) fn recover_windows(segments: &mut Vec<BeatSegment>, windows: &[WeakWi
 
     let mut recovered = Vec::new();
     for window in windows {
+        let existing = segments.iter().position(|segment| {
+            segment.start_seconds < window.start + window.duration
+                && segment.end_seconds > window.start
+        });
+        if let Some(index) = existing {
+            let segment = &segments[index];
+            // Preserve existing observed beats. Tempo-only context may gain actual source attacks
+            // only by replacing the same interval, never by adding an overlapping row.
+            if !segment.beats.is_empty()
+                || (segment.start_seconds - window.start).abs() > 0.001
+                || (segment.end_seconds - window.start - window.duration).abs() > 0.001
+            {
+                continue;
+            }
+        }
         let anchor = segments
             .iter()
             .filter(|segment| {
@@ -106,7 +121,13 @@ pub(super) fn recover_windows(segments: &mut Vec<BeatSegment>, windows: &[WeakWi
         if let Some(anchor) = anchor
             && let Some(segment) = window.recover(anchor)
         {
-            recovered.push(segment);
+            if let Some(index) = existing {
+                if (segments[index].bpm / segment.bpm - 1.0).abs() <= 0.03 {
+                    segments[index] = segment;
+                }
+            } else {
+                recovered.push(segment);
+            }
         }
         if segments.len() + recovered.len() >= MAX_SEGMENTS {
             break;

@@ -13,7 +13,25 @@ export component LosslessBadge inherits Rectangle {
     accessible-label: @tr("Lossless encoding; original recording provenance unknown");
     HorizontalLayout {
         padding-left: 5px; padding-right: 5px; spacing: 4px;
-        Icon { width: 16px; height: 16px; source: @image-url("../assets/lossless.svg"); colorize: root.spectrum ? Theme.spectrum-accent : Theme.accent; }
-        Text { text: "Lossless"; color: root.spectrum ? Theme.spectrum-accent : Theme.accent; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+        Rectangle {
+            width: 16px;
+            Icon {
+                x: 0px; y: 0.5px;
+                width: 16px; height: 16px;
+                source: @image-url("../assets/lossless.svg");
+                colorize: root.spectrum ? Theme.spectrum-accent : Theme.accent;
+            }
+        }
+        Rectangle {
+            width: 50px;
+            Text {
+                x: 0px; y: 0px;
+                width: parent.width; height: parent.height;
+                text: "Lossless";
+                color: root.spectrum ? Theme.spectrum-accent : Theme.accent;
+                font-size: 11px; font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
     }
 }

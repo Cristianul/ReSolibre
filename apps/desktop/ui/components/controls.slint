@@ -32,16 +32,22 @@ export component ActionButton inherits Rectangle {
     in property <int> caption-weight: 400;
     in property <length> caption-size: root.compact ? 11px : 14px;
     in property <bool> hold-enabled: false;
+    in property <bool> suppress-click-after-drag: false;
     private property <bool> pointer-down: false;
+    private property <length> press-x;
+    private property <length> press-y;
     private property <bool> held: false;
     private property <bool> suppress-click: false;
     callback press-started();
+    callback press-moved();
+    callback press-ended();
     callback hold-started();
     callback hold-ended();
     callback clicked();
 
     // End pointer capture without turning a long press or cancellation into navigation.
     function finish-hold(cancelled: bool) {
+        if root.pointer-down { root.press-ended(); }
         root.pointer-down = false;
         if cancelled { root.suppress-click = true; }
         if root.held { root.held = false; root.hold-ended(); }
@@ -144,12 +150,23 @@ export component ActionButton inherits Rectangle {
                 focus.focus();
                 root.suppress-click = false;
                 root.pointer-down = true;
+                root.press-x = touch.mouse-x;
+                root.press-y = touch.mouse-y;
                 root.press-started();
             }
             if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
                 root.finish-hold(false);
             }
             if event.kind == PointerEventKind.cancel { root.finish-hold(true); }
+        }
+        moved => {
+            if root.pointer-down {
+                if root.suppress-click-after-drag
+                    && (abs(touch.mouse-x - root.press-x) > 6px || abs(touch.mouse-y - root.press-y) > 6px) {
+                    root.suppress-click = true;
+                }
+                if !root.suppress-click-after-drag || root.suppress-click { root.press-moved(); }
+            }
         }
         clicked => { if !root.suppress-click { focus.focus(); root.clicked(); } }
     }

@@ -12,7 +12,7 @@ import { ThemesWindow } from "themes-window.slint";
 export { ThemesWindow }
 import { AnalysisWindow, TempoZone } from "analysis-window.slint";
 export { AnalysisWindow, TempoZone }
-import { WindowHeader, WindowSurface, PulloutDrawer } from "components/window-header.slint";
+import { WindowDragArea, WindowHeader, WindowSurface, PulloutDrawer } from "components/window-header.slint";
 import { CollectionArtwork } from "components/instruments.slint";
 import { LosslessBadge } from "components/lossless-badge.slint";
 import { LiveSpectrum } from "components/live-spectrum.slint";
@@ -38,6 +38,11 @@ export component PlayerWindow inherits Window {
     default-font-family: "Sans Serif";
     default-font-size: 14px;
     in property <string> track-title: @tr("Your music. Ready when you are.");
+    in property <string> incoming-title;
+    in property <float> title-mix-progress;
+    private property <float> visible-title-mix: root.reduced-motion
+        ? (root.title-mix-progress >= 0.05 ? 1 : 0)
+        : clamp((root.title-mix-progress - 0.02) / 0.035, 0, 1);
     in property <bool> analysis-enabled;
     callback open-analysis();
     callback reanalyze-current();
@@ -63,6 +68,7 @@ export component PlayerWindow inherits Window {
     in property <string> mix-caption;
     in property <float> mix-start;
     in property <float> mix-end;
+    in property <string> mix-remaining-label;
     callback toggle-mix();
     in property <float> trim-start;
     in property <float> trim-end;
@@ -89,7 +95,6 @@ export component PlayerWindow inherits Window {
     in property <bool> eq-dialog-open;
     in property <float> volume: 50;
     in property <string> technical-info;
-    in property <string> technical-details;
     in property <bool> lossless;
     private property <bool> show-lossless: root.lossless && root.technical-info != ""
         && root.error-message == "" && root.playlist-error == "" && root.theme-error == "" && root.import-status == "";
@@ -106,6 +111,9 @@ export component PlayerWindow inherits Window {
     in property <bool> can-next: false;
     in property <bool> closing: false;
     in property <bool> settings-loading: false;
+    private property <bool> passive-drag-enabled: !root.closing && !root.settings-loading
+        && !root.app-menu-open && !root.reset-confirm && !root.eq-dialog-open && !root.drop-menu;
+    private property <bool> title-group-moving: false;
     in property <bool> picking: false;
     in property <[TrackRow]> tracks;
     in property <[AnalysisRow]> analysis-states;
@@ -116,6 +124,7 @@ export component PlayerWindow inherits Window {
     callback cancel-library-analysis();
     in property <string> library-duration: "00:00";
     in property <int> current: -1;
+    in property <int> other-current: -1;
     in-out property <bool> eq-expanded: true;
     in property <bool> reduced-motion: false;
     in property <bool> initializing: false;
@@ -183,6 +192,31 @@ export component PlayerWindow inherits Window {
     // Restores keyboard focus when the chooser closes.
     public function focus-themes() { themes-menu.focus(); }
 
+    // A title press may become a grouped move; an ordinary release remains a button click.
+    function start-title-move() {
+        if root.passive-drag-enabled { root.title-group-moving = root.begin-group-move(); }
+    }
+
+    // The button reports motion only after its click-cancellation threshold.
+    function update-title-move() {
+        if root.title-group-moving { root.update-group-move(); }
+    }
+
+    // Release grouped native placement without changing the title's click action.
+    function end-title-move() {
+        if root.title-group-moving { root.end-group-move(); }
+        root.title-group-moving = false;
+    }
+
+    // Passive chassis, readouts and EQ gaps move the window; later controls keep pointer priority.
+    WindowDragArea {
+        x: 6px; y: 6px; width: root.width - 12px; height: root.height - 12px;
+        movable: root.passive-drag-enabled;
+        begin-group-move => { root.begin-group-move() }
+        update-group-move => { root.update-group-move(); }
+        end-group-move => { root.end-group-move(); }
+    }
+
     // Paint the drawer first: the stationary player occludes its top throughout the slide.
     if root.eq-expanded || root.eq-reveal > 0: Rectangle {
         x: 12px;
@@ -229,14 +263,19 @@ export component PlayerWindow inherits Window {
                 Rectangle {
                     width: 206px; height: 206px;
                     CollectionArtwork { width: parent.width; height: parent.height; artwork: root.cover-image; has-cover: root.has-cover; loading: root.cover-loading; }
-                    artwork-hover := TouchArea { }
+                    artwork-hover := WindowDragArea {
+                        movable: root.passive-drag-enabled;
+                        begin-group-move => { root.begin-group-move() }
+                        update-group-move => { root.update-group-move(); }
+                        end-group-move => { root.end-group-move(); }
+                    }
                     analysis-button := ActionButton {
                         x: parent.width - self.width - 8px; y: parent.height - self.height - 8px;
                         width: 32px; height: 32px; compact: true;
                         label: @tr("Analyze track: spectrogram and BPM");
                         icon: @image-url("assets/analysis.svg");
                         enabled: root.analysis-enabled && !root.closing && !root.settings-loading;
-                        opacity: artwork-hover.has-hover || self.hovered || self.focused ? 1 : 0;
+                        opacity: artwork-hover.hovered || self.hovered || self.focused ? 1 : 0;
                         clicked => { root.open-analysis(); }
                     }
                 }
@@ -246,12 +285,47 @@ export component PlayerWindow inherits Window {
                         height: 46px;
                         VerticalLayout {
                             spacing: 2px;
-                            ActionButton { list-entry: true; background: transparent; content-padding: 0px; compact: true; show-icon: false; align-left: true; caption-size: 25px; caption-weight: 600; caption: root.track-title; scroll-caption: true; animate-caption: !root.reduced-motion && !root.minimized && !root.eq-dialog-open; label: @tr("Show current track in library"); enabled: (!root.closing && !root.settings-loading); clicked => { root.reveal-current(); } }
+                            WindowDragArea {
+                                height: 26px;
+                                movable: root.passive-drag-enabled && !root.title-group-moving;
+                                ActionButton {
+                                    width: parent.width; height: parent.height;
+                                    visible: root.visible-title-mix < 1;
+                                    opacity: 1 - root.visible-title-mix;
+                                    list-entry: true; background: transparent; content-padding: 0px; compact: true;
+                                    show-icon: false; align-left: true; caption-size: 25px; caption-weight: 600;
+                                    caption: root.track-title; scroll-caption: true;
+                                    animate-caption: !root.reduced-motion && !root.minimized && !root.eq-dialog-open;
+                                    label: @tr("Show current track in library");
+                                    enabled: !root.closing && !root.settings-loading;
+                                    suppress-click-after-drag: true;
+                                    press-started => { root.start-title-move(); }
+                                    press-moved => { root.update-title-move(); }
+                                    press-ended => { root.end-title-move(); }
+                                    clicked => { root.reveal-current(); }
+                                }
+                                ActionButton {
+                                    width: parent.width; height: parent.height;
+                                    visible: root.visible-title-mix > 0 && root.incoming-title != "";
+                                    opacity: root.visible-title-mix;
+                                    list-entry: true; background: transparent; content-padding: 0px; compact: true;
+                                    show-icon: false; align-left: true; caption-size: 25px; caption-weight: 600;
+                                    caption: root.incoming-title; scroll-caption: true;
+                                    animate-caption: !root.reduced-motion && !root.minimized && !root.eq-dialog-open;
+                                    label: @tr("Show incoming track in library");
+                                    enabled: !root.closing && !root.settings-loading;
+                                    suppress-click-after-drag: true;
+                                    press-started => { root.start-title-move(); }
+                                    press-moved => { root.update-title-move(); }
+                                    press-ended => { root.end-title-move(); }
+                                    clicked => { root.reveal-current(); }
+                                }
+                            }
                             HorizontalLayout {
                                 spacing: 7px;
                                 if root.show-lossless: LosslessBadge { spectrum: root.spectrum; }
                                 Text {
-                                text: root.error-message != "" ? root.error-message : root.playlist-error != "" ? root.playlist-error : root.theme-error != "" ? root.theme-error : root.import-status != "" ? root.import-status : root.technical-info != "" ? (root.show-lossless ? root.technical-details : root.technical-info) : root.state-label;
+                                text: root.error-message != "" ? root.error-message : root.playlist-error != "" ? root.playlist-error : root.theme-error != "" ? root.theme-error : root.import-status != "" ? root.import-status : root.technical-info != "" ? root.technical-info : root.state-label;
                                 color: root.error-message != "" || root.playlist-error != "" || root.theme-error != "" ? Theme.error : Theme.muted;
                                 font-size: 12px; overflow: elide; vertical-alignment: center; accessible-live-region: polite;
                                 }
@@ -261,6 +335,12 @@ export component PlayerWindow inherits Window {
                     HorizontalLayout {
                         spacing: 4px; height: 28px;
                         Text { text: root.time-label; color: Theme.text; font-size: 12px; vertical-alignment: center; min-width: 38px; }
+                        if root.mix-remaining-label != "": Text {
+                            text: root.mix-remaining-label;
+                            color: Theme.mix-region;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
                         ControlSlider {
                             label: @tr("Playback position"); minimum: 0; maximum: max(1, root.duration); step: 1;
                             spectrum: root.spectrum;

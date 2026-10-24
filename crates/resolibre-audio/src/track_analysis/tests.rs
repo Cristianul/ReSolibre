@@ -185,7 +185,8 @@ fn encoded_variants_preserve_measured_bandwidth_and_source_bytes() {
 /// Malformed media, cancelled work and changed identity fail privately rather than returning partial measurements.
 #[test]
 fn malformed_cancelled_and_changed_sources_fail_closed() {
-    let path = std::env::temp_dir().join(format!("resolibre-analysis-invalid-{}", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("resolibre-analysis-invalid-{}", std::process::id()));
     std::fs::write(&path, b"invalid media").unwrap();
     let file = File::open(&path).unwrap();
     let key = SourceKey::read(&file, 0).unwrap();
@@ -220,8 +221,10 @@ fn malformed_cancelled_and_changed_sources_fail_closed() {
 /// Native on-demand decoding preserves channel energy and dimensions instead of using a stereo output downmix.
 #[test]
 fn native_analysis_preserves_multichannel_phase_and_retry() {
-    let directory =
-        std::env::temp_dir().join(format!("resolibre-analysis-channels-{}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!(
+        "resolibre-analysis-channels-{}",
+        std::process::id()
+    ));
     std::fs::create_dir(&directory).unwrap();
     let mono = directory.join("mono.wav");
     source_wav(&mono, 1);
@@ -333,8 +336,10 @@ fn native_analysis_uses_selected_video_audio_stream() {
 #[test]
 fn original_decoder_retries_have_independent_cursors() {
     use std::io::{Seek, SeekFrom};
-    let path =
-        std::env::temp_dir().join(format!("resolibre-analysis-cursor-{}.wav", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "resolibre-analysis-cursor-{}.wav",
+        std::process::id()
+    ));
     source_wav(&path, 1);
     let mut file = File::open(&path).unwrap();
     file.seek(SeekFrom::End(0)).unwrap();
@@ -359,8 +364,10 @@ fn original_decoder_retries_have_independent_cursors() {
 /// Tiny streams retain their exact sample count; cancellation at different native startup/drain boundaries is bounded.
 #[test]
 fn tiny_streams_and_native_cancellation_are_bounded() {
-    let path =
-        std::env::temp_dir().join(format!("resolibre-analysis-tiny-{}.wav", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "resolibre-analysis-tiny-{}.wav",
+        std::process::id()
+    ));
     source_wav(&path, 1);
     let original = std::fs::read(&path).unwrap();
     for frames in [1_u32, 47, 2049] {
@@ -425,6 +432,59 @@ fn analyze_cached_mode(
             started.elapsed() < Duration::from_secs(15),
             "cached job deadline"
         );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A real recording's retained-stream result survives another job and off-track badge reopening.
+#[test]
+#[ignore = "requires RESOUL_ANALYSIS_PROBE pointing to an authorized local recording"]
+fn authorized_recording_reopens_without_decoding_after_another_track() {
+    let path = std::path::PathBuf::from(
+        std::env::var_os("RESOUL_ANALYSIS_PROBE").expect("authorized input required"),
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("cache");
+    let config = Arc::new(crate::analysis_cache::CacheConfig::new(cache));
+    let file = File::open(&path).unwrap();
+    let key = SourceKey::read(&file, 0).unwrap();
+    let retained = file.try_clone().unwrap();
+    let mut first = TrackJob::start(file, key, Some(config.clone())).unwrap();
+    let original = finish_probe(&mut first);
+    assert!(first.progress() > 0.0);
+
+    let other = directory.path().join("other.wav");
+    source_wav(&other, 1);
+    let mut second =
+        TrackJob::start_input(TrackInput::Path(other), Some(config.clone()), false).unwrap();
+    finish_probe(&mut second);
+
+    let started = Instant::now();
+    let mut reopened = TrackJob::start_input(TrackInput::Path(path), Some(config), false).unwrap();
+    let loaded = finish_probe(&mut reopened);
+    assert_eq!(
+        reopened.progress(),
+        0.0,
+        "badge reopening must not decode the original again"
+    );
+    assert_eq!(loaded.power_db, original.power_db);
+    assert_eq!(loaded.provenance, original.provenance);
+    assert_eq!(SourceKey::read(&retained, 0).unwrap(), key);
+    println!(
+        "cached badge reopened in {:.3} s, decoded {:.1} s",
+        started.elapsed().as_secs_f64(),
+        reopened.progress()
+    );
+}
+
+/// Waits for an explicitly authorized real-file probe using the production analysis deadline.
+fn finish_probe(job: &mut TrackJob) -> TrackAnalysis {
+    let deadline = Instant::now() + DEADLINE + Duration::from_secs(95);
+    loop {
+        if let Some(result) = job.poll() {
+            return result.unwrap();
+        }
+        assert!(Instant::now() < deadline, "authorized cache probe deadline");
         thread::sleep(Duration::from_millis(5));
     }
 }

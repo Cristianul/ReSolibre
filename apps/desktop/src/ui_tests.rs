@@ -84,8 +84,7 @@ fn native_preview() {
     window.set_track_title("Night Drive.flac".into());
     window.set_state_label("Paused · Local audio".into());
     window.set_lossless(true);
-    window.set_technical_details("44.1 kHz · 24-bit · Stereo · ≈ 120.0 BPM".into());
-    window.set_technical_info("Lossless · 44.1 kHz · 24-bit · Stereo · ≈ 120.0 BPM".into());
+    window.set_technical_info("FLAC · 44.1 kHz · 24-bit · Stereo · ≈ 120.0 BPM".into());
     window.set_live_available(true);
     window.set_live_levels(ModelRc::new(VecModel::from(
         (0..24)

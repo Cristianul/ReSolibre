@@ -14,8 +14,9 @@ from pcm_signal import MAX_CAPTURE_BYTES, require
 class Child:
     """Own one process group and its bounded files until cleanup completes."""
 
-    def __init__(self, stack, command, directory, environment, name, pipe_stdout=False):
-        """Own logs/process cleanup; optional stdout pipe requires bounded parent reads."""
+    def __init__(self, stack, command, directory, environment, name, pipe_stdout=False,
+                 file_limit=limit_child_files):
+        """Own logs/process cleanup; callers may give a bounded worker a larger file limit."""
         self.stdout = stack.enter_context((directory / f"{name}.out").open("xb+"))
         self.stderr = stack.enter_context((directory / f"{name}.err").open("xb+"))
         self.started = time.monotonic()
@@ -24,7 +25,7 @@ class Child:
             command, cwd=directory, env=environment,
             stdout=subprocess.PIPE if pipe_stdout else self.stdout,
             stderr=self.stderr, stdin=subprocess.DEVNULL,
-            start_new_session=True, preexec_fn=limit_child_files,
+            start_new_session=True, preexec_fn=file_limit,
         )
         stack.callback(self.stop)
         if pipe_stdout:
@@ -104,10 +105,11 @@ class PrivateAudio:
         """Reap all children before the caller removes the private directory."""
         self.stack.close()
 
-    def start(self, command, pipe_stdout=False):
-        """Start an owned child with unique bounded logs and the private environment."""
+    def start(self, command, pipe_stdout=False, file_limit=limit_child_files):
+        """Start an owned child with bounded logs and an explicit file-size policy."""
         self.sequence += 1
-        return Child(self.stack, command, self.directory, self.environment, str(self.sequence), pipe_stdout)
+        return Child(self.stack, command, self.directory, self.environment, str(self.sequence),
+                     pipe_stdout, file_limit)
 
     def command(self, arguments, deadline, allow_failure=False):
         """Run a private control command; never expose native diagnostics on failure."""

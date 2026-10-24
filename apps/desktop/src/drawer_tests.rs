@@ -90,7 +90,8 @@ fn native_drawer_animation() {
     crate::window_snap::select_x11().unwrap();
     let window = PlayerWindow::new().unwrap();
     equalizer::initialize(&window);
-    let session = resolibre_audio::session::Session::start(resolibre_audio::AudioOutput::Silent).unwrap();
+    let session =
+        resolibre_audio::session::Session::start(resolibre_audio::AudioOutput::Silent).unwrap();
     let controller = Rc::new(RefCell::new(presentation::Controller::new(session)));
     presentation::connect(&window, &controller);
     window.set_reduced_motion(false);

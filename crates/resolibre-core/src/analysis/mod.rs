@@ -1,6 +1,7 @@
 //! Portable original-audio diagnostics with bounded storage, independent of playback and platform decoders.
 
 pub mod activity;
+pub mod provenance;
 pub mod rhythm;
 pub mod tempo;
 #[cfg(test)]
@@ -27,6 +28,7 @@ pub struct TrackAnalysis {
     pub seconds_per_column: f64,
     pub sustained_bandwidth_hz: Option<f64>,
     pub tempo: TempoReport,
+    pub provenance: provenance::ProvenanceReport,
 }
 
 pub struct TrackAnalyzer {
@@ -121,6 +123,7 @@ impl TrackAnalyzer {
             seconds_per_column: self.map.span as f64 * HOP_SIZE as f64 / f64::from(self.rate),
             sustained_bandwidth_hz: bandwidth,
             tempo: self.tempo.finish(),
+            provenance: provenance::ProvenanceReport::Unavailable,
         })
     }
 }

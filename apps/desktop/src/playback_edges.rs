@@ -53,21 +53,29 @@ pub fn show(window: &PlayerWindow, snapshot: &Snapshot) {
         let (outgoing, incoming) = ratio.counts();
         window.set_mix_caption(format!("{outgoing}:{incoming}").into());
     }
-    let mix_region = snapshot.mix_region.filter(|region| {
+    let (mix_region, duration) = if snapshot.display_next {
+        match snapshot.audible_next {
+            Some(next) => (next.mix_region, Some(next.duration)),
+            None => (None, None),
+        }
+    } else {
+        (snapshot.mix_region, snapshot.duration)
+    };
+    let mix_region = mix_region.filter(|region| {
         snapshot.mix_enabled
             && region.start.is_finite()
             && region.end.is_finite()
             && region.start >= 0.0
             && region.end > region.start
-            && snapshot
-                .duration
-                .is_some_and(|duration| duration.is_finite() && duration >= region.end)
+            && duration.is_some_and(|duration| duration.is_finite() && duration >= region.end)
     });
-    let duration = snapshot.duration.unwrap_or(1.0);
+    let duration = duration.unwrap_or(1.0);
     window.set_mix_start(mix_region.map_or(0.0, |region| (region.start / duration) as f32));
     window.set_mix_end(mix_region.map_or(0.0, |region| (region.end / duration) as f32));
     window.set_trim_enabled(snapshot.edges.trim);
-    window.set_trim_regions(snapshot.trim_end.is_some() && snapshot.edges.trim);
+    window.set_trim_regions(
+        !snapshot.display_next && snapshot.trim_end.is_some() && snapshot.edges.trim,
+    );
     window.set_fade_mode(match snapshot.edges.fade {
         FadeMode::Off => 0,
         FadeMode::In => 1,
@@ -232,6 +240,33 @@ mod tests {
         assert_eq!(window.get_mix_end(), 0.0);
         snapshot.mix_enabled = true;
         snapshot.mix_region = None;
+        show(&window, &snapshot);
+        assert_eq!(window.get_mix_end(), 0.0);
+
+        snapshot.display_next = true;
+        snapshot.audible_next = Some(resolibre_audio::session::AudibleNext {
+            index: 1,
+            position: 4.0,
+            duration: 100.0,
+            gain: 0.4,
+            mix_region: Some(PlaybackRegion {
+                start: 2.0,
+                end: 18.0,
+            }),
+            seekable: true,
+            stream_info: None,
+        });
+        show(&window, &snapshot);
+        assert_eq!(window.get_mix_start(), 0.02);
+        assert_eq!(window.get_mix_end(), 0.18);
+
+        snapshot.audible_next.as_mut().unwrap().mix_region = Some(PlaybackRegion {
+            start: 2.0,
+            end: 101.0,
+        });
+        show(&window, &snapshot);
+        assert_eq!(window.get_mix_end(), 0.0);
+        snapshot.audible_next = None;
         show(&window, &snapshot);
         assert_eq!(window.get_mix_end(), 0.0);
     }

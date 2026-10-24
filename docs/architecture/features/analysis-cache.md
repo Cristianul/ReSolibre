@@ -49,20 +49,26 @@ hashing, including older cache entries, without decoding. Index hits do not refr
 overwrite descriptive tags. Missing/corrupt/evicted full reports never restore a badge.
 
 Hashing has a two-second cooperative deadline, 512 MiB input/read budget,
-16 MiB per probe/packet read phase and no whole-file buffer. Malformed/unsupported or multi-audio-stream containers bypass
+16 MiB per probe/packet read phase and no whole-file buffer. Development builds
+optimize SHA-2 too: unoptimized hashing exhausted this deadline on ordinary large
+recordings, silently bypassing persistence despite a completed analysis badge. Malformed/unsupported or multi-audio-stream containers bypass
 persistence and retain ordinary native analysis. Native and portable stream IDs
 are not assumed interchangeable: only a single audio stream is eligible. Cached
 lookahead still resolves the actual native selected stream before publication.
 Local filesystem stalls and allocations internal to demuxers are not hard realtime
 bounded. Results describe original audio, independent of EQ, output volume or MIX.
 
-SQLite transactions use schema 3, defensive mode, untrusted-schema protection,
+SQLite transactions use schema 6, defensive mode, untrusted-schema protection,
 50 ms lock waits, a 2 MiB page cache, no mmap and bounded result reads. Unknown
 schemas are rejected; incompatible future analysis/hash changes must explicitly
 invalidate the cache in a schema migration, not silently reinterpret old rows.
-Schemas 1–2 are atomically invalidated and recomputed on demand for activity edges
-and contextual tempo recovery. Schema 3 validates activity bounds before use.
-Media and session preferences are untouched. There is no per-algorithm version registry. Corrupt result rows become misses;
+Schemas 1–4 are atomically invalidated and recomputed on demand for the revised
+tempo analysis; old rhythm and full reports cannot supply BPM or analysis badges.
+Metadata and source hints remain, but hints require a fresh validated full report
+before restoring a badge. Media and session preferences are untouched.
+Schema 5 full reports are invalidated for [lossy-source evidence](lossy-source-detection.md);
+standalone rhythm rows survive. Finite detector scores/ranges and 1–6 excerpts are
+validated before reuse. There is no per-algorithm version registry. Corrupt result rows become misses;
 corrupt/unwritable/locked storage falls back to fresh analysis and logs one redacted
 warning per session. Playback does not depend on storage success.
 
@@ -87,10 +93,17 @@ Deleting the dedicated analysis directory while closed also rebuilds the cache.
 ## Tests
 
 Storage checks restart, tags versus audio changes, inconclusive reports, coverage,
-invalid activity/beat/geometry/JSON, schema-1/2 invalidation, future/corrupt schemas, LRU bounds, profile isolation,
+invalid activity/beat/geometry/JSON, schema-1/2/3/4 tempo and schema-5 full-report invalidation, fresh-result retention,
+metadata/preferences preservation, harmless stale badge hints, future/corrupt schemas, LRU bounds, profile isolation,
 links and permissions. Native jobs prove a retagged FLAC cache hit leaves decoded
 progress at zero and returns the same measurements; changed audio requires decoding.
 A real session restart restores automatic rhythm and the requested spectrogram.
+Regression checks also reopen the previous badge after MIX handover, preserve a
+marked cached report, and measure a generated 64 MiB input within the identity
+budget (`song_sized_audio_identity_fits_cache_deadline`, opt-in). An authorized
+real-file probe verifies A → B → A returns zero decoded seconds (0.67 s for a
+76 MB FLAC locally, versus the previous two-second identity timeout). Opening a saved
+result is labelled separately from actual PCM analysis.
 
 Run `cargo test --workspace`; opt-in container checks:
 `cargo test -p resolibre-storage real_formats_retag_without_reanalysis -- --ignored`.

@@ -60,6 +60,11 @@ Missing evidence/unsupported ratios retain crossfade and supported MIX cuts.
 
 Keep one authoritative queue/session, bounded preparation, pitch preservation,
 explicit controls/cancellation, source isolation and correlated-peak headroom.
+During audible overlap, show both playing occurrences; crossfade the title with
+the audible gain. Next may focus the incoming timeline without changing playback,
+and its seek bar stays read-only until handover. Full current analysis starts on
+playback when missing; MIX also schedules the next full report behind current
+rhythm and current full analysis.
 Validate half/double ambiguity, variable tempo, short tracks, next-source failure,
 seek/pause/skip, queue edits and changes during overlap. Common physical timing and
 listening quality must be demonstrated; two handles alone prove neither.

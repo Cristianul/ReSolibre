@@ -2,13 +2,14 @@
 
 use super::Worker;
 use crate::original_audio::SourceKey;
-use crate::session::{Command, MixStatus, edges::EdgeRuntime};
+use crate::session::{AudibleNext, Command, EdgeStatus, MixStatus, edges::EdgeRuntime};
 use crate::{LocalPlayer, PlaybackError};
 use resolibre_core::playback_edges::{FadeMode, PlaybackRegion};
-use resolibre_core::queue::Advance;
+use resolibre_core::queue::{Advance, Queue};
 use resolibre_core::session::{SessionState, Volume};
 use resolibre_core::transition::{TempoReturn, TransitionFrame, TransitionPlan};
 use resolibre_core::{PlaybackEvent, SeekPosition};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 mod phase;
@@ -28,6 +29,11 @@ struct ReturningTempo {
 }
 
 impl MixRuntime {
+    /// Identifies the retained incoming occurrence for artwork preloading.
+    pub(super) fn incoming_id(&self) -> Option<u64> {
+        self.incoming.as_ref().map(|incoming| incoming.id)
+    }
+
     /// Exposes only confirmed bounds from the retained transition, never a UI estimate.
     pub(super) fn region(&self) -> Option<PlaybackRegion> {
         let incoming = self.incoming.as_ref()?;
@@ -57,6 +63,57 @@ impl MixRuntime {
             .as_ref()
             .is_some_and(|incoming| incoming.started)
     }
+
+    /// Exposes an observed incoming clock only after the next stream contributes audible gain.
+    pub(super) fn audible_next(&self, queue: &Queue<PathBuf>) -> Option<AudibleNext> {
+        let incoming = self.incoming.as_ref()?;
+        if !incoming.started || incoming.cancelling.is_some() {
+            return None;
+        }
+        let gain = incoming.last_frame?.incoming_gain;
+        if gain <= 0.0 {
+            return None;
+        }
+        let position = incoming.last_position?;
+        let duration = incoming.duration?;
+        if !position.is_finite() || !duration.is_finite() || duration <= 0.0 {
+            return None;
+        }
+        let mix_region = incoming
+            .plan
+            .and_then(|plan| incoming_overlap_region(plan, duration));
+        let index = queue.index_of(incoming.id)?;
+        Some(AudibleNext {
+            index,
+            position: position.clamp(0.0, duration),
+            duration,
+            gain: gain.clamp(0.0, 1.0),
+            mix_region,
+            seekable: incoming.seekable,
+            stream_info: incoming.stream_info,
+        })
+    }
+}
+
+/// Maps the retained overlap to incoming source seconds for a truthful seek-bar marker.
+fn incoming_overlap_region(plan: TransitionPlan, duration: f64) -> Option<PlaybackRegion> {
+    let start = plan.incoming_start;
+    let end = if plan.outgoing_bpm.is_some() && plan.incoming_bpm.is_some() {
+        plan.incoming_position(plan.outgoing_end)?
+    } else {
+        start + (plan.outgoing_end - plan.outgoing_start)
+    };
+    if !duration.is_finite()
+        || !start.is_finite()
+        || !end.is_finite()
+        || duration <= 0.0
+        || start < 0.0
+        || start >= duration
+    {
+        return None;
+    }
+    let end = end.min(duration);
+    (end > start).then_some(PlaybackRegion { start, end })
 }
 
 struct Incoming {
@@ -76,6 +133,10 @@ struct Incoming {
     incoming_speed: f64,
     preroll: f64,
     last_frame: Option<TransitionFrame>,
+    last_position: Option<f64>,
+    duration: Option<f64>,
+    seekable: bool,
+    stream_info: Option<resolibre_core::track_info::StreamInfo>,
     cancelling: Option<(Instant, TransitionFrame)>,
     source_keys: Option<(SourceKey, SourceKey)>,
 }
@@ -100,6 +161,7 @@ impl Worker {
                 if *generation == self.snapshot.generation
                     && self.loaded
                     && self.snapshot.seekable
+                    && !self.snapshot.display_next
                     && (self.mixing.controls_gain() || self.mixing.returning.is_some())
                 {
                     self.cancel_mix()?;
@@ -125,6 +187,9 @@ impl Worker {
             | Command::CancelAnalysis { .. }
             | Command::Add(_)
             | Command::SetMix(true) => {}
+            Command::Next if self.snapshot.audible_next.is_some() => {}
+            Command::Previous if self.snapshot.display_next => {}
+            Command::Scan { .. } if self.snapshot.display_next => {}
             _ => self.cancel_mix()?,
         }
         Ok(())
@@ -202,6 +267,13 @@ impl Worker {
         if self.continue_tempo_return()? {
             return Ok(());
         }
+        if self.snapshot.edge_status == EdgeStatus::Pending {
+            // The outgoing end may move when TRIM completes; keep audio playing,
+            // but defer a transition plan until its source bounds are settled.
+            self.cancel_mix()?;
+            self.snapshot.mix_status = MixStatus::Preparing;
+            return Ok(());
+        }
         let mut lookahead = self.queue.clone();
         let Some(index) = lookahead.advance(Advance::Ended) else {
             self.cancel_mix()?;
@@ -263,6 +335,10 @@ impl Worker {
                 incoming_speed: 1.0,
                 preroll: 0.0,
                 last_frame: None,
+                last_position: None,
+                duration: None,
+                seekable: false,
+                stream_info: None,
                 cancelling: None,
                 source_keys: None,
             });
@@ -363,7 +439,11 @@ impl Worker {
                 .snapshot
                 .duration
                 .map(|end| PlaybackRegion { start: 0.0, end }));
-            let next_duration = incoming.player.timing()?.duration;
+            let next_timing = incoming.player.timing()?;
+            let next_duration = next_timing.duration;
+            incoming.duration = incoming.edges.source_duration().or(next_duration);
+            incoming.seekable = next_timing.seekable;
+            incoming.stream_info = incoming.player.stream_info().ok().flatten();
             let opening = incoming
                 .edges
                 .region
@@ -485,6 +565,16 @@ impl Worker {
         } else {
             incoming.player.audio_position()?
         };
+        let displayed_position = match next_position {
+            Some(position) => Some(position),
+            None if !seeking => incoming.player.timing()?.position,
+            None => None,
+        };
+        if let Some(observed) =
+            displayed_position.filter(|position| position.is_finite() && *position >= 0.0)
+        {
+            incoming.last_position = Some(observed);
+        }
         if plan.phase_matched
             && audio_position.is_some()
             && let Some(wanted) = plan.incoming_position(position)
@@ -574,9 +664,20 @@ impl Worker {
 
     /// Advances the authoritative queue once, adopting the already-running next stream without replaying its intro.
     pub(super) fn promote_mix(&mut self) -> Result<bool, PlaybackError> {
+        self.promote_retained_mix(false)
+    }
+
+    /// Gives an explicit seek control of the already audible incoming stream.
+    pub(super) fn promote_mix_for_seek(&mut self) -> Result<bool, PlaybackError> {
+        self.promote_retained_mix(true)
+    }
+
+    /// Transfers queue ownership once; an explicit seek ends the overlap and tempo curve.
+    fn promote_retained_mix(&mut self, for_seek: bool) -> Result<bool, PlaybackError> {
         if !self.mixing.incoming.as_ref().is_some_and(|incoming| {
             incoming.started
-                && (!incoming.plan.is_some_and(|plan| plan.phase_matched)
+                && (for_seek
+                    || !incoming.plan.is_some_and(|plan| plan.phase_matched)
                     || incoming.phase_release.is_some())
         }) {
             return Ok(false);
@@ -592,6 +693,17 @@ impl Worker {
             return Err(PlaybackError::InvalidEvent);
         }
         incoming.player.set_amplitude(self.amplitude)?;
+        if for_seek {
+            incoming.player.set_mix_speed(1.0)?;
+            incoming.player.apply_edges(
+                incoming
+                    .edges
+                    .region
+                    .map(|region| (region, self.snapshot.edges.fade)),
+                self.snapshot.equalizer,
+                false,
+            )?;
+        }
         let timing = incoming.player.timing()?;
         self.snapshot.position = timing.position;
         self.snapshot.duration = incoming.edges.source_duration().or(timing.duration);
@@ -604,14 +716,18 @@ impl Worker {
         self.loaded = true;
         self.snapshot.generation += 1;
         // Carry the original curve across ownership transfer; never reset speed at handover.
-        self.mixing.returning = incoming
-            .plan
-            .and_then(TransitionPlan::tempo_return)
-            .map(|curve| ReturningTempo {
-                curve,
-                generation: self.snapshot.generation,
-                speed: incoming.incoming_speed,
-            });
+        self.mixing.returning = if for_seek {
+            None
+        } else {
+            incoming
+                .plan
+                .and_then(TransitionPlan::tempo_return)
+                .map(|curve| ReturningTempo {
+                    curve,
+                    generation: self.snapshot.generation,
+                    speed: incoming.incoming_speed,
+                })
+        };
         self.snapshot.current = next;
         self.snapshot.rhythm = crate::session::RhythmStatus::Detecting;
         self.snapshot.next_rhythm = None;
@@ -624,7 +740,6 @@ impl Worker {
         self.snapshot.live_spectrum = None;
         self.metadata
             .select(self.queue.current_id(), &mut self.snapshot);
-        self.metadata.reload(&mut self.snapshot);
         self.previous_restart_requested = None;
         self.info_refresh = None;
         self.info_warning_logged = false;
@@ -639,4 +754,50 @@ fn source_key(player: &mut LocalPlayer) -> Result<SourceKey, PlaybackError> {
     let file = player.analysis_input()?;
     let stream = player.audio_stream_index()?;
     SourceKey::read(&file, stream).map_err(|_| PlaybackError::InvalidEvent)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use resolibre_core::transition::BeatRatio;
+
+    /// An ordinary fade marks its incoming source range without invented tempo evidence.
+    #[test]
+    fn incoming_fade_marker_uses_source_bounds_and_rejects_invalid_duration() {
+        let plan = TransitionPlan {
+            outgoing_start: 8.0,
+            outgoing_end: 16.0,
+            incoming_start: 2.0,
+            outgoing_bpm: None,
+            incoming_bpm: None,
+            phase_matched: false,
+            beat_ratio: BeatRatio::OneToOne,
+        };
+        assert_eq!(
+            incoming_overlap_region(plan, 100.0),
+            Some(PlaybackRegion {
+                start: 2.0,
+                end: 10.0
+            })
+        );
+        assert_eq!(incoming_overlap_region(plan, f64::NAN), None);
+        assert_eq!(incoming_overlap_region(plan, 2.0), None);
+    }
+
+    /// Tempo overlap boundaries follow the planned incoming clock ratio.
+    #[test]
+    fn incoming_tempo_marker_uses_planned_source_ratio() {
+        let plan = TransitionPlan {
+            outgoing_start: 8.0,
+            outgoing_end: 16.0,
+            incoming_start: 2.0,
+            outgoing_bpm: Some(110.0),
+            incoming_bpm: Some(100.0),
+            phase_matched: false,
+            beat_ratio: BeatRatio::OneToOne,
+        };
+        let region = incoming_overlap_region(plan, 100.0).unwrap();
+        assert_eq!(region.start, 2.0);
+        assert!((region.end - 10.8).abs() < 0.001);
+    }
 }

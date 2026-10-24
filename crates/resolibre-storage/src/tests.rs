@@ -203,7 +203,7 @@ fn activity_cache_migrates_by_reanalysis_and_validates_bounds() {
         .connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 6);
     assert!(cache.rhythm(&key, true).unwrap().is_none());
     cache.save_rhythm(&key, true, &rhythm()).unwrap();
     cache
@@ -239,6 +239,172 @@ fn activity_cache_migrates_by_reanalysis_and_validates_bounds() {
         report.activity.first_sound = Some(first);
         report.activity.last_sound = Some(last);
         assert!(cache.save_rhythm(&key, true, &report).is_err());
+    }
+}
+
+/// New tempo analysis invalidates all legacy coverage once; source hints alone cannot restore badges.
+#[test]
+fn tempo_upgrade_invalidates_old_reports_and_retains_new_results() {
+    for legacy_version in [3, 4] {
+        let fixture = Fixture::new();
+        let mut cache = fixture.cache();
+        let version: i64 = cache
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 6, "new profiles start with the current schema");
+
+        let key = identity();
+        let facts = [9; 56];
+        let full_report = track();
+        let rhythm_report = rhythm();
+        cache.save_track(&key, &full_report).unwrap();
+        cache.save_rhythm(&key, false, &rhythm_report).unwrap();
+        cache.save_rhythm(&key, true, &rhythm_report).unwrap();
+        cache.save_track_source(&facts, &key).unwrap();
+        assert!(cache.has_track(&key).unwrap());
+        cache
+            .connection
+            .pragma_update(None, "user_version", legacy_version)
+            .unwrap();
+        drop(cache);
+
+        let mut cache = fixture.cache();
+        assert!(cache.rhythm(&key, false).unwrap().is_none());
+        assert!(cache.rhythm(&key, true).unwrap().is_none());
+        assert!(cache.track(&key).unwrap().is_none());
+        assert!(!cache.has_tracks().unwrap());
+        let hint = cache.track_source(&facts).unwrap().unwrap();
+        assert_eq!(hint.digest, key.digest);
+        assert!(
+            !cache.has_track(&hint).unwrap(),
+            "an unchanged source hint cannot resurrect an invalidated analysis badge"
+        );
+
+        cache.save_track(&key, &full_report).unwrap();
+        cache.save_rhythm(&key, false, &rhythm_report).unwrap();
+        cache.save_rhythm(&key, true, &rhythm_report).unwrap();
+        drop(cache);
+
+        let cache = fixture.cache();
+        let version: i64 = cache
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 6);
+        assert_eq!(
+            cache.rhythm(&key, false).unwrap(),
+            Some(rhythm_report.clone())
+        );
+        assert_eq!(cache.rhythm(&key, true).unwrap(), Some(rhythm_report));
+        assert_eq!(
+            cache.track(&key).unwrap().unwrap().duration_seconds,
+            full_report.duration_seconds
+        );
+        assert!(cache.has_track(&hint).unwrap());
+        assert_eq!(
+            cache.track_source(&facts).unwrap().unwrap().digest,
+            key.digest
+        );
+    }
+}
+
+/// Invalidating one profile's measurements preserves metadata, saved session data and other profiles.
+#[test]
+fn provenance_upgrade_preserves_rhythm_and_validates_scores() {
+    use resolibre_core::analysis::provenance::ProvenanceReport;
+    let fixture = Fixture::new();
+    let key = identity();
+    let mut cache = fixture.cache();
+    cache.save_track(&key, &track()).unwrap();
+    cache.save_rhythm(&key, true, &rhythm()).unwrap();
+    cache
+        .connection
+        .pragma_update(None, "user_version", 5)
+        .unwrap();
+    drop(cache);
+
+    let mut cache = fixture.cache();
+    assert!(cache.track(&key).unwrap().is_none());
+    assert_eq!(cache.rhythm(&key, true).unwrap(), Some(rhythm()));
+    let mut report = track();
+    report.provenance = ProvenanceReport::Measured {
+        lossy_score: 0.95,
+        minimum_score: 0.9,
+        maximum_score: 1.0,
+        windows: 3,
+    };
+    assert!(
+        cache.save_track(&key, &report).is_err(),
+        "8 kHz is outside the model's evaluated range"
+    );
+    let mut analyzer = TrackAnalyzer::new(44_100, 1).unwrap();
+    for _ in 0..6 {
+        analyzer.push(&vec![0.0; 14_700]).unwrap();
+    }
+    let provenance = report.provenance;
+    report = analyzer.finish().unwrap();
+    report.provenance = provenance;
+    cache.save_track(&key, &report).unwrap();
+    assert_eq!(
+        cache.track(&key).unwrap().unwrap().provenance,
+        report.provenance
+    );
+    for (minimum, maximum, windows) in [(0.99, 1.0, 3), (0.9, 1.1, 3), (0.9, 1.0, 7), (0.9, 1.0, 0)]
+    {
+        report.provenance = ProvenanceReport::Measured {
+            lossy_score: 0.95,
+            minimum_score: minimum,
+            maximum_score: maximum,
+            windows,
+        };
+        assert!(cache.save_track(&key, &report).is_err());
+    }
+    let mut malformed = serde_json::to_value(track()).unwrap();
+    malformed.as_object_mut().unwrap().remove("provenance");
+    cache
+        .write(&key, 2, &serde_json::to_vec(&malformed).unwrap())
+        .unwrap();
+    assert!(cache.track(&key).unwrap().is_none());
+}
+
+/// Invalidating old tempo reports preserves metadata, saved sessions and other profiles.
+#[test]
+fn tempo_upgrade_preserves_unrelated_profile_data() {
+    for legacy_version in [3, 4] {
+        let fixture = Fixture::new();
+        let other_profile = Fixture::new();
+        let mut cache = fixture.cache();
+        let mut other_cache = other_profile.cache();
+        let key = identity();
+        let facts = [3; 56];
+        let record = metadata::Metadata {
+            title: Some("Retained title".into()),
+            search_text: "retained title artist".into(),
+            duration_seconds: Some(240),
+        };
+        cache.prepare_metadata().unwrap();
+        cache.save_metadata(&facts, &record).unwrap();
+        cache.save_rhythm(&key, true, &rhythm()).unwrap();
+        other_cache.save_rhythm(&key, true, &rhythm()).unwrap();
+        let session_path = fixture.0.join("session.bin");
+        let saved_session = b"owned fixture: saved playback preferences";
+        fs::write(&session_path, saved_session).unwrap();
+        cache
+            .connection
+            .pragma_update(None, "user_version", legacy_version)
+            .unwrap();
+        drop(cache);
+        drop(other_cache);
+
+        let cache = fixture.cache();
+        assert!(cache.rhythm(&key, true).unwrap().is_none());
+        assert_eq!(cache.metadata(&facts).unwrap(), Some(record));
+        assert_eq!(fs::read(session_path).unwrap(), saved_session);
+        assert_eq!(
+            other_profile.cache().rhythm(&key, true).unwrap(),
+            Some(rhythm())
+        );
     }
 }
 
@@ -319,6 +485,50 @@ fn wav(title: &str, sample: i16) -> Vec<u8> {
     bytes.extend_from_slice(&(body.len() as u32).to_le_bytes());
     bytes.extend(body);
     bytes
+}
+
+/// Ordinary song-sized input must produce a reusable content key within the existing two-second budget.
+#[test]
+#[ignore = "song-sized hashing budget; run explicitly in development and release profiles"]
+fn song_sized_audio_identity_fits_cache_deadline() {
+    use std::io::Write;
+    let fixture = Fixture::new();
+    let path = fixture.0.join("song.wav");
+    let size = 64_u32 * 1024 * 1024;
+    let mut header = wav("Owned hashing fixture", 12);
+    header.truncate(header.len() - 32000);
+    let header_size = header.len();
+    header[4..8].copy_from_slice(&(header_size as u32 - 8 + size).to_le_bytes());
+    header[22..24].copy_from_slice(&2_u16.to_le_bytes());
+    header[24..28].copy_from_slice(&96000_u32.to_le_bytes());
+    header[28..32].copy_from_slice(&384000_u32.to_le_bytes());
+    header[32..34].copy_from_slice(&4_u16.to_le_bytes());
+    header[header_size - 4..].copy_from_slice(&size.to_le_bytes());
+    let mut file = fs::File::create(&path).unwrap();
+    file.write_all(&header).unwrap();
+    let block = [0x12; 65536];
+    for _ in 0..size as usize / block.len() {
+        file.write_all(&block).unwrap();
+    }
+    drop(file);
+    let started = std::time::Instant::now();
+    let identity =
+        audio_identity::identify(fs::File::open(&path).unwrap(), &AtomicBool::new(false));
+    assert!(
+        identity.is_some(),
+        "song-sized identity must complete inside the existing cache deadline"
+    );
+    println!(
+        "64 MiB audio identity: {:.3} s",
+        started.elapsed().as_secs_f64()
+    );
+    let mut cache = fixture.cache();
+    let identity = identity.unwrap();
+    cache.save_track(&identity, &track()).unwrap();
+    let reopened =
+        audio_identity::identify(fs::File::open(&path).unwrap(), &AtomicBool::new(false)).unwrap();
+    assert_eq!(identity.digest, reopened.digest);
+    assert!(cache.track(&reopened).unwrap().is_some());
 }
 
 /// Metadata changes reuse the hash, PCM changes invalidate it, and cancellation never returns a partial key.

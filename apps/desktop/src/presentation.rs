@@ -33,6 +33,8 @@ pub struct Controller {
         std::collections::BTreeMap<u64, resolibre_audio::session::LibraryAnalysisStatus>,
     >,
     cover_revision: u64,
+    next_cover_revision: u64,
+    artwork_next: bool,
     pub(crate) generation: u64,
     close_started: Option<Instant>,
     local_error: Option<String>,
@@ -61,6 +63,8 @@ impl Controller {
             analysis_marks: Default::default(),
             analysis_pending: 0,
             cover_revision: 0,
+            next_cover_revision: 0,
+            artwork_next: false,
             generation: 0,
             close_started: None,
             local_error: None,
@@ -363,13 +367,25 @@ impl Controller {
             self.queue_revision = snapshot.queue_revision;
         }
         self.refresh_analysis_marks(window, &snapshot);
-        if snapshot.cover_revision != self.cover_revision {
+        let artwork_next = snapshot.display_next && snapshot.audible_next.is_some();
+        if snapshot.cover_revision != self.cover_revision
+            || snapshot.next_cover_revision != self.next_cover_revision
+            || artwork_next != self.artwork_next
+        {
+            if artwork_next != self.artwork_next {
+                crate::artwork::show(window, None);
+            }
             crate::artwork::update(window, &snapshot);
             self.cover_revision = snapshot.cover_revision;
+            self.next_cover_revision = snapshot.next_cover_revision;
+            self.artwork_next = artwork_next;
         }
         window.set_analysis_enabled(
             snapshot
-                .current
+                .audible_next
+                .filter(|_| artwork_next)
+                .map(|next| next.index)
+                .or(snapshot.current)
                 .and_then(|index| snapshot.tracks.get(index))
                 .is_some(),
         );
@@ -499,6 +515,8 @@ fn clock_label(seconds: Option<f64>) -> String {
 fn show_snapshot(window: &PlayerWindow, snapshot: &Snapshot) {
     crate::equalizer::show(window, snapshot);
     crate::playback_edges::show(window, snapshot);
+    let incoming = snapshot.audible_next;
+    let display_next = snapshot.display_next && incoming.is_some();
     if let Some(track) = snapshot
         .current
         .and_then(|index| snapshot.tracks.get(index))
@@ -507,6 +525,16 @@ fn show_snapshot(window: &PlayerWindow, snapshot: &Snapshot) {
     } else {
         window.set_track_title("Your music. Ready when you are.".into());
     }
+    let incoming_title = incoming
+        .and_then(|next| snapshot.tracks.get(next.index))
+        .map(|track| track.title.as_str())
+        .unwrap_or("");
+    window.set_incoming_title(incoming_title.into());
+    window.set_title_mix_progress(if display_next {
+        1.0
+    } else {
+        incoming.map_or(0.0, |next| next.gain as f32)
+    });
     let label = match snapshot.state {
         SessionState::Idle => "Open a local audio file to begin",
         SessionState::Loading => "Loading local audio…",
@@ -532,7 +560,11 @@ fn show_snapshot(window: &PlayerWindow, snapshot: &Snapshot) {
     crate::track_info::show(window, snapshot);
     window.set_playing(snapshot.state == SessionState::Playing);
     window.set_can_play(!snapshot.tracks.is_empty());
-    window.set_can_seek(snapshot.seekable && snapshot.duration.is_some());
+    window.set_can_seek(if display_next {
+        incoming.is_some_and(|next| next.seekable)
+    } else {
+        snapshot.seekable && snapshot.duration.is_some()
+    });
     window.set_can_previous(snapshot.can_previous);
     window.set_previous_navigates(snapshot.previous_navigates);
     window.set_can_next(snapshot.can_next);
@@ -542,11 +574,49 @@ fn show_snapshot(window: &PlayerWindow, snapshot: &Snapshot) {
         RepeatMode::All => crate::RepeatState::All,
         RepeatMode::One => crate::RepeatState::One,
     });
-    window.set_current(snapshot.current.map(|index| index as i32).unwrap_or(-1));
-    window.set_position(snapshot.position.unwrap_or(0.0) as f32);
-    window.set_duration(snapshot.duration.unwrap_or(1.0) as f32);
-    window.set_time_label(clock_label(snapshot.position).into());
-    window.set_duration_label(clock_label(snapshot.duration).into());
+    let displayed_index = if display_next {
+        incoming.map(|next| next.index)
+    } else {
+        snapshot.current
+    };
+    let other_index = incoming.and_then(|next| {
+        if display_next {
+            snapshot.current
+        } else {
+            Some(next.index)
+        }
+    });
+    let displayed_position = if display_next {
+        incoming.map(|next| next.position)
+    } else {
+        snapshot.position
+    };
+    let displayed_duration = if display_next {
+        incoming.map(|next| next.duration)
+    } else {
+        snapshot.duration
+    };
+    window.set_current(displayed_index.map(|index| index as i32).unwrap_or(-1));
+    window.set_other_current(other_index.map(|index| index as i32).unwrap_or(-1));
+    window.set_position(displayed_position.unwrap_or(0.0) as f32);
+    window.set_duration(displayed_duration.unwrap_or(1.0) as f32);
+    window.set_time_label(clock_label(displayed_position).into());
+    window.set_duration_label(clock_label(displayed_duration).into());
+    let mix_remaining = if display_next && snapshot.mix_enabled {
+        incoming
+            .and_then(|next| next.mix_region)
+            .and_then(|_| snapshot.mix_region.zip(snapshot.position))
+            .and_then(|(region, position)| {
+                let remaining = region.end - position;
+                remaining.is_finite().then_some(remaining.max(0.0))
+            })
+    } else {
+        None
+    };
+    let mix_remaining_label = mix_remaining
+        .map(|seconds| format!("MIX ≈{}", clock_label(Some(seconds.ceil()))))
+        .unwrap_or_default();
+    window.set_mix_remaining_label(mix_remaining_label.into());
     window.set_volume(snapshot.volume.percent() as f32);
 }
 
@@ -608,17 +678,67 @@ pub fn connect(window: &PlayerWindow, controller: &Rc<RefCell<Controller>>) {
     // Gesture state is independent: a snapshot can disable/cancel the slider while
     // the controller is already borrowed for refresh. Cancellation must not reborrow it.
     let gesture_generation = Rc::new(Cell::new(None));
+    let incoming_gesture = Rc::new(Cell::new(false));
+    let incoming_target = Rc::new(Cell::new(None::<f64>));
+    let incoming_id = Rc::new(Cell::new(None::<u64>));
     let gesture = Rc::clone(&gesture_generation);
+    let incoming = Rc::clone(&incoming_gesture);
+    let track_id = Rc::clone(&incoming_id);
     let controls = Rc::clone(controller);
     window.on_seek_started(move || {
-        gesture.set(Some(controls.borrow().generation));
+        let controls = controls.borrow();
+        gesture.set(Some(controls.generation));
+        let snapshot = controls.snapshot();
+        incoming.set(snapshot.display_next);
+        track_id.set(
+            snapshot
+                .audible_next
+                .filter(|_| snapshot.display_next)
+                .and_then(|next| snapshot.tracks.get(next.index))
+                .map(|track| track.id),
+        );
     });
     let gesture = Rc::clone(&gesture_generation);
-    window.on_seek_ended(move || gesture.set(None));
+    let incoming = Rc::clone(&incoming_gesture);
+    let target = Rc::clone(&incoming_target);
+    let track_id = Rc::clone(&incoming_id);
+    let controls = Rc::clone(controller);
+    let weak = window.as_weak();
+    window.on_seek_ended(move || {
+        if incoming.replace(false)
+            && let Some(seconds) = target.take()
+            && let Some(window) = weak.upgrade()
+        {
+            let snapshot = controls.borrow().snapshot();
+            let generation = if snapshot
+                .current
+                .and_then(|index| snapshot.tracks.get(index))
+                .is_some_and(|track| Some(track.id) == track_id.get())
+            {
+                snapshot.generation
+            } else {
+                gesture.get().unwrap_or(snapshot.generation)
+            };
+            submit(
+                &window,
+                &controls,
+                Command::Seek {
+                    generation,
+                    seconds,
+                },
+            );
+        }
+        gesture.set(None);
+        track_id.set(None);
+    });
     let weak = window.as_weak();
     let controls = Rc::clone(controller);
     window.on_seek(move |seconds| {
         if let Some(window) = weak.upgrade() {
+            if incoming_gesture.get() {
+                incoming_target.set(Some(seconds as f64));
+                return;
+            }
             let generation = gesture_generation
                 .get()
                 .unwrap_or(controls.borrow().generation);
@@ -695,6 +815,115 @@ pub fn connect(window: &PlayerWindow, controller: &Rc<RefCell<Controller>>) {
             resize_for_equalizer(&window, &resize_timer, size.width);
         }
     });
+}
+
+#[cfg(test)]
+mod mix_view_tests {
+    use super::*;
+    use resolibre_audio::session::{AudibleNext, TrackLabel};
+    use resolibre_core::playback_edges::PlaybackRegion;
+
+    /// The incoming title becomes fully visible near overlap start instead of fading through the whole mix.
+    #[test]
+    fn title_switches_early_without_an_empty_middle() {
+        use i_slint_backend_testing::ElementHandle;
+
+        i_slint_backend_testing::init_no_event_loop();
+        let window = PlayerWindow::new().unwrap();
+        window.show().unwrap();
+        window.set_track_title("Outgoing".into());
+        window.set_incoming_title("Incoming".into());
+        window.set_title_mix_progress(0.01);
+        assert!(
+            ElementHandle::find_by_accessible_label(&window, "Show current track in library")
+                .next()
+                .is_some()
+        );
+        window.set_title_mix_progress(0.1);
+        assert!(
+            ElementHandle::find_by_accessible_label(&window, "Show incoming track in library")
+                .next()
+                .is_some()
+        );
+    }
+
+    /// Overlap highlights both occurrences; Next changes the displayed track and seek timeline without audio handover.
+    #[test]
+    fn incoming_focus_switches_display_without_changing_session_identity() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = PlayerWindow::new().unwrap();
+        let tracks = [
+            TrackLabel {
+                id: 1,
+                title: "Outgoing".into(),
+                search_text: String::new(),
+                duration_seconds: Some(16),
+            },
+            TrackLabel {
+                id: 2,
+                title: "Incoming".into(),
+                search_text: String::new(),
+                duration_seconds: Some(16),
+            },
+        ];
+        let mut snapshot = Snapshot {
+            tracks: tracks.into(),
+            current: Some(0),
+            state: SessionState::Playing,
+            position: Some(12.0),
+            duration: Some(16.0),
+            seekable: true,
+            can_next: true,
+            mix_enabled: true,
+            mix_region: Some(PlaybackRegion {
+                start: 8.0,
+                end: 15.0,
+            }),
+            audible_next: Some(AudibleNext {
+                index: 1,
+                position: 2.0,
+                duration: 16.0,
+                gain: 0.4,
+                mix_region: Some(PlaybackRegion {
+                    start: 0.0,
+                    end: 7.0,
+                }),
+                seekable: true,
+                stream_info: None,
+            }),
+            ..Default::default()
+        };
+        show_snapshot(&window, &snapshot);
+        assert_eq!(window.get_current(), 0);
+        assert_eq!(window.get_other_current(), 1);
+        assert_eq!(window.get_track_title(), "Outgoing");
+        assert_eq!(window.get_incoming_title(), "Incoming");
+        assert!((window.get_title_mix_progress() - 0.4).abs() < 0.001);
+        assert_eq!(window.get_position(), 12.0);
+        assert_eq!(window.get_mix_remaining_label(), "");
+
+        snapshot.display_next = true;
+        show_snapshot(&window, &snapshot);
+        assert_eq!(window.get_current(), 1);
+        assert_eq!(window.get_other_current(), 0);
+        assert_eq!(window.get_position(), 2.0);
+        assert_eq!(window.get_duration(), 16.0);
+        assert_eq!(window.get_title_mix_progress(), 1.0);
+        assert!(window.get_can_seek());
+        assert_eq!(window.get_mix_remaining_label(), "MIX ≈0:03");
+
+        snapshot.current = Some(1);
+        snapshot.audible_next = None;
+        snapshot.display_next = false;
+        snapshot.position = Some(3.0);
+        show_snapshot(&window, &snapshot);
+        assert_eq!(window.get_current(), 1);
+        assert_eq!(window.get_other_current(), -1);
+        assert_eq!(window.get_track_title(), "Incoming");
+        assert_eq!(window.get_title_mix_progress(), 0.0);
+        assert!(window.get_can_seek());
+        assert_eq!(window.get_mix_remaining_label(), "");
+    }
 }
 
 /// Expands before the drawer slides out, but shrinks only after its closing animation.

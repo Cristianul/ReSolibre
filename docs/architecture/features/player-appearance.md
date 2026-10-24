@@ -18,10 +18,14 @@ Seek spans transport/volume. SHFL/REP/TRIM/FADE align left; framed EQ/LIB align 
 TRIM is yellow.
 A brush opens Themes. EQ overlaps beneath the player without rails or a gap;
 Library stays separate. Both default visible; Green/Spectrum share behavior.
-Shared frameless chrome has native title dragging and 6 px resize borders. Main
-has minimize/maximize/Close; Library has a thin draggable top inset, no title/X.
+Shared frameless chrome drags from the title button and passive chassis, readout, cover
+and EQ gaps, with 6 px resize borders. Main has minimize/maximize/Close; Library
+drags from its thin top inset and passive margins/footer, with no title/X.
+Analysis and Themes also drag from passive content and margins.
 LIB hides it. Main Close saves/stops.
-Toolbar controls never drag. [Covers](track-metadata.md): 206² centered fill.
+Short title clicks still reveal Library; other buttons, sliders, menus, row gestures
+and resize edges keep their actions.
+[Covers](track-metadata.md): 206² centered fill.
 Hosts share 6 px transparent corners, a fine lip and shallow brushed faceplate.
 Library uses recessed 36 px rows, no outer rim and a shaded footer. Buttons have
 no focus rings; keyboard, hover/press and active states remain.
@@ -71,6 +75,7 @@ Compiled controls check chooser reuse/close/shutdown, selection isolation, keybo
 defaults, palette isolation, seek generation and EQ sweeps. Isolated native renders
 cover both palettes, 760/800 widths, 1x/2x, Unicode/long titles, empty/error states
 and detached hosts. Native silent playback exercises panel/palette changes and EQ.
+Pointer tests cover passive drag routing, control clicks and disabled movement.
 
 ## Edge Cases
 

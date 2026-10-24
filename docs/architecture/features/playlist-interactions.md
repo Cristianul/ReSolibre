@@ -50,6 +50,8 @@ stores the confirmed order.
 
 Clicking the main player's track title opens/unminimizes and requests focus for
 Library, clears [search](library-search.md), selects current and scrolls it into view. Empty queues still open safely.
+Dragging the title past 6 logical pixels moves the player instead and suppresses
+the reveal click; the incoming MIX title uses the same gesture.
 Arrow keys browse without playback; Enter activates. Accessible row default action
 selects; the list retains keyboard playback/removal actions.
 

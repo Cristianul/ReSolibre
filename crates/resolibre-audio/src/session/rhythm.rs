@@ -109,6 +109,22 @@ impl RhythmRuntime {
         cached.is_some_and(|entry| !entry.whole) && self.whole_attempted != Some(current)
     }
 
+    /// Gives a missing MIX lookahead rhythm excerpt priority over full background decoding.
+    pub(super) fn lookahead_priority(
+        &mut self,
+        queue: &Queue<PathBuf>,
+        snapshot: &mut Snapshot,
+    ) -> bool {
+        self.select_targets(queue, snapshot);
+        let Some((next, _)) = self.next.as_ref() else {
+            return false;
+        };
+        if self.job.is_some() && self.target == *next && !self.cancelled {
+            return true;
+        }
+        !self.attempted.contains(next) && !self.cache.iter().any(|entry| entry.id == *next)
+    }
+
     /// Reports native work still being reaped; full analysis waits rather than starting a second decoder.
     pub(super) fn busy(&self) -> bool {
         self.job.is_some()

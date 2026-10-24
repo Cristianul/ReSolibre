@@ -274,6 +274,7 @@ impl PlaylistHost {
         window.set_analysis_summary(main.get_analysis_summary());
         window.set_total_duration(main.get_library_duration());
         window.set_current(main.get_current());
+        window.set_other_current(main.get_other_current());
         window.set_playing(main.get_playing());
         window.set_spectrum(main.get_spectrum());
         window.set_motion_enabled(!self.reduce_motion);

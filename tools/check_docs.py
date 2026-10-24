@@ -205,6 +205,9 @@ READING_FLOWS = {
     "track-analysis": CORE_CONTEXT + DESKTOP_CONTEXT + VERIFICATION + (
         ARCH + "features/track-analysis.md",
     ),
+    "lossy-source-detection": CORE_CONTEXT + DESKTOP_CONTEXT + VERIFICATION + (
+        ARCH + "features/lossy-source-detection.md",
+    ),
     "spectral-analysis": CORE_CONTEXT + VERIFICATION + (
         ARCH + "features/spectral-analysis.md",
     ),

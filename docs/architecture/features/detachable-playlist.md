@@ -11,7 +11,7 @@ Queue traversal, EQ, persistence or future named playlists.
 
 ## Current Behavior
 
-Library is the session track list; `playlist_*` names remain internal. Its host shares the session. Library and EQ default to visible. LIB toggles Library; its thin top inset drags, with no title or X.
+Library is the session track list; `playlist_*` names remain internal. Its host shares the session. Library and EQ default to visible. LIB toggles Library; its thin top inset and passive margins/footer drag, with no title or X.
 EQ collapses without bypassing DSP. Main Close shuts down owned hosts and audio/storage.
 
 X11/XWayland hosts share the main player's ICCCM leader/group. Only main appears
@@ -72,9 +72,10 @@ Registries hold at most 16 weak surfaces; hidden/minimized/maximized/fullscreen
 peers cannot snap. Bounded acknowledgements reject duplicate feedback while newer
 moves are pending; suppression expires after 500 ms.
 Independent moves detach immediately. Checked offsets cannot wrap coordinates.
-Attached main title-bar gestures move the captured group directly from total physical
+Attached main passive-surface gestures move the captured group directly from total physical
 pointer displacement, avoiding the compositor snapping main to its following peers.
-Release, Escape, focus loss, resize or hidden peers end the gesture. Only the owned
+Library losing focus as the player activates does not cancel that press.
+Release, Escape, player focus loss, resize or hidden peers end the gesture. Only the owned
 window is queried during its press; no global input hooks. Detached/native-Wayland
 hosts retain toolkit drag. Other moves use batched live geometry.
 

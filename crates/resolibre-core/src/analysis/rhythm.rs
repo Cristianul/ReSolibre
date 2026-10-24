@@ -1,4 +1,4 @@
-//! Fast portable rhythm-only analysis; no FFT, spectrogram or native dependencies.
+//! Portable rhythm analysis with bounded spectral features; no spectrogram image or native dependencies.
 
 use super::tempo::{TempoAnalyzer, TempoReport};
 use crate::spectrum::{AnalysisError, MAX_CHANNELS, MAX_INPUT_FRAMES};

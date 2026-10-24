@@ -3,14 +3,22 @@
 from collections import deque
 import os
 import re
+import resource
 import select
 import socket
 import time
 
 from pcm_signal import require
+from check_pcm_conversion import limit_child_files
 from responsiveness_signal import BLOCK_FRAMES, RATE, MonitorBuffer, consecutive
 
 WORKER_TEST = "responsiveness_tests::control_fixture"
+
+
+def limit_analysis_files():
+    """Allow one bounded detector WAV while keeping capture/monitor processes at their smaller limits."""
+    resource.setrlimit(resource.RLIMIT_FSIZE, (24 * 1024 * 1024, 24 * 1024 * 1024))
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def start_monitor(audio):
@@ -47,7 +55,7 @@ class Probe:
         self.socket.setblocking(False)
         self.worker = audio.start([
             *worker_command, "--ignored", "--exact", WORKER_TEST, "--nocapture", "--test-threads=1",
-        ])
+        ], file_limit=limit_analysis_files if "RESOUL_PROBE_ANALYSIS=1" in worker_command else limit_child_files)
         self.deadline = self.worker.started + lifetime
         target = audio.directory / "worker.sock"
         while not target.exists():

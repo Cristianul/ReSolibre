@@ -1,7 +1,13 @@
-//! Bounded onset-energy tempo measurements. Values describe pulses, not musical meter or downbeats.
+//! Bounded whole-track tempo context from energy and spectral onsets, with observed beat evidence.
 
 mod context;
+#[cfg(test)]
+mod context_tests;
 mod estimate;
+mod evidence;
+mod pulse;
+mod resolve;
+mod spectral;
 use super::activity::{ActivityAnalyzer, AudioActivity};
 use estimate::estimate;
 
@@ -98,12 +104,15 @@ pub(super) struct TempoAnalyzer {
     previous: f64,
     envelope: Vec<f64>,
     start_seconds: f64,
-    segments: Vec<BeatSegment>,
     weak_windows: Vec<context::WeakWindow>,
+    spectral: spectral::SpectralOnsets,
+    spectral_envelopes: [Vec<f64>; spectral::ENVELOPE_BANDS],
+    periodicity: evidence::PeriodicityAnalyzer,
+    windows: Vec<evidence::WindowEvidence>,
 }
 
 impl TempoAnalyzer {
-    /// Allocates a single 32-second energy envelope; PCM is never retained.
+    /// Allocates bounded onset/FFT workspaces; only compact evidence survives each 32-second window.
     pub(super) fn new(rate: u32, channels: usize) -> Self {
         Self {
             rate,
@@ -122,8 +131,11 @@ impl TempoAnalyzer {
             previous: 0.0,
             envelope: Vec::with_capacity(WINDOW),
             start_seconds: 0.0,
-            segments: Vec::new(),
             weak_windows: Vec::new(),
+            spectral: spectral::SpectralOnsets::new(rate, channels),
+            spectral_envelopes: std::array::from_fn(|_| Vec::with_capacity(WINDOW)),
+            periodicity: evidence::PeriodicityAnalyzer::new(),
+            windows: Vec::new(),
         }
     }
 
@@ -135,6 +147,7 @@ impl TempoAnalyzer {
                 self.flush_bin();
                 self.bin = bin;
             }
+            self.spectral.push_frame(frame);
             for (sample, state) in frame.iter().zip(&mut self.lowpass) {
                 let sample = f64::from(*sample);
                 self.energy += sample * sample;
@@ -167,6 +180,13 @@ impl TempoAnalyzer {
         self.bass_envelope
             .push((bass - self.bass_previous).max(0.0));
         self.bass_previous = bass;
+        for (envelope, value) in self
+            .spectral_envelopes
+            .iter_mut()
+            .zip(self.spectral.take_bin())
+        {
+            envelope.push(value);
+        }
         self.bass_energy = 0.0;
         self.energy = 0.0;
         self.count = 0;
@@ -175,8 +195,11 @@ impl TempoAnalyzer {
         }
     }
 
-    /// Retains only measured beat segments and advances across inconclusive regions without inventing beats.
+    /// Retains bounded tempo alternatives and observed beats, including evidence from inconclusive windows.
     fn flush_window(&mut self) {
+        if self.envelope.is_empty() {
+            return;
+        }
         let full = estimate(&self.envelope, self.start_seconds);
         let bass = estimate(&self.bass_envelope, self.start_seconds);
         let selected = match (full, bass) {
@@ -201,16 +224,30 @@ impl TempoAnalyzer {
             }
             (full, bass) => full.or(bass),
         };
-        if self.segments.len() + self.weak_windows.len() < MAX_SEGMENTS {
-            if let Some(segment) = selected {
-                self.segments.push(segment);
-            } else {
+        if self.windows.len() < MAX_SEGMENTS {
+            let envelopes = [
+                self.spectral_envelopes[0].as_slice(),
+                self.spectral_envelopes[1].as_slice(),
+                self.spectral_envelopes[2].as_slice(),
+                self.spectral_envelopes[3].as_slice(),
+            ];
+            // RMS carries precise attacks, but sustained carriers can ripple across its short bins.
+            // Only spectral changes may supply the additional whole-track periodicity evidence.
+            self.windows.push(self.periodicity.collect(
+                self.start_seconds,
+                &envelopes,
+                selected.clone(),
+            ));
+            if selected.is_none() {
                 self.weak_windows.push(context::WeakWindow::collect(
                     &self.envelope,
                     &self.bass_envelope,
                     self.start_seconds,
                 ));
             }
+        }
+        for envelope in &mut self.spectral_envelopes {
+            envelope.clear();
         }
         self.bass_envelope.clear();
         self.start_seconds += self.envelope.len() as f64 / ENVELOPE_RATE as f64;
@@ -221,20 +258,21 @@ impl TempoAnalyzer {
     pub(super) fn finish(mut self) -> TempoReport {
         self.flush_bin();
         self.flush_window();
-        let mut tempos: Vec<f64> = self.segments.iter().map(|segment| segment.bpm).collect();
+        let mut segments = resolve::resolve_track(&self.windows);
+        let mut tempos: Vec<f64> = segments.iter().map(|segment| segment.bpm).collect();
         tempos.sort_by(f64::total_cmp);
         let median = tempos.get(tempos.len() / 2).copied();
         let variable =
             median.is_some_and(|median| tempos.iter().any(|bpm| (bpm / median - 1.0).abs() > 0.03));
         // Context may fill sparse windows, but must not vote on the independent overall tempo.
-        context::recover_windows(&mut self.segments, &self.weak_windows);
+        context::recover_windows(&mut segments, &self.weak_windows);
         TempoReport {
             activity: self
                 .activity
                 .finish(self.frames as f64 / f64::from(self.rate)),
             bpm: if variable { None } else { median },
             variable,
-            segments: self.segments,
+            segments,
         }
     }
 }

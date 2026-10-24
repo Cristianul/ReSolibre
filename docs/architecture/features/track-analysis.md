@@ -2,8 +2,7 @@
 
 ## Read When
 
-Changing on-demand original-audio diagnostics, BPM, observed beat times, analysis
-jobs or their grouped desktop window. Use `track-analysis` in `tools/check_docs.py`.
+Changing diagnostics, BPM, beats, jobs or their window. Use `track-analysis`.
 
 ## Do Not Read For
 
@@ -12,69 +11,78 @@ jobs or their grouped desktop window. Use `track-analysis` in `tools/check_docs.
 
 ## Current Behavior
 
-The artwork chart button works after Stop too. It opens title,
-progress, Cancel/retry and plot scales. Completed views retain
-their report, facts and image across navigation; unfinished current-track views
-are interrupted. [Library badges](library-analysis.md) inspect their own occurrence
+The artwork chart button opens title, progress, Cancel/retry and plot scales,
+including after Stop. Completed views survive navigation; unfinished current-track views are interrupted. [Library badges](library-analysis.md) inspect their own occurrence
 without playback. Closing cancels only view work; the [cache](analysis-cache.md)
 reuses results. Idle sources open read-only in the analysis worker.
 
-A selectable BPM lane shares the time axis, with boundaries, local estimates
-and gray unknown gaps. Hover, click or keyboard selection
-shows interval timestamps. Variable results show the measured min–max range.
-At most 512 measured zones plus gaps are rendered; invalid/overlapping bounds are
-rejected. Windows span up to 32 seconds; boundaries are approximate. The live player follows local tempo; the inspected snapshot stays fixed.
+A selectable BPM lane shows boundaries, local estimates and gray unknown gaps on
+the shared time axis. Hover, click or keyboard selection shows interval timestamps;
+variable results show the measured min–max range. At most 512 zones plus gaps render;
+invalid/overlapping bounds are rejected. Windows span up to 32 seconds with approximate
+boundaries. The player follows local tempo; the inspected snapshot stays fixed.
 
-`resolibre-core::analysis` owns algorithms and typed results. It streams the shared
-2,048-frame STFT, averages channel power without destructive downmix, and merges
-adjacent time columns when the matrix fills. At most 512 columns × 256 linear
-frequency rows are retained; the matrix uses mean power of the strongest FFT bin
-per row, displayed in dBFS/bin (-120 to 0). The final partial window cannot extend
-the duration axis. Input is capped at four hours, 32 channels and bounded blocks.
-The original decoder accepts 8–384 kHz. Unsupported limits fail explicitly.
+`resolibre-core::analysis` owns typed results and streams the shared 2,048-frame STFT
+with channel-power averaging, avoiding destructive downmix. Adjacent columns merge
+when full: at most 512 columns × 256 linear frequency rows remain. Each row uses
+mean power of its strongest FFT bin, displayed in dBFS/bin (-120 to 0). A final
+partial window cannot extend the duration axis. Input limits are four hours,
+32 channels and bounded blocks; the original decoder accepts 8–384 kHz.
+Unsupported limits fail explicitly.
 
-Spectral extent is the highest non-DC bin present in at least 20% of active full
-windows, above both -90 dBFS/bin and 50 dB below that window's strongest bin. At
-least four active windows are required. This is a conservative content observation,
-not a calibrated transcode detector, loudness measurement or listening-quality
-score. Silence/insufficient evidence is inconclusive. Codec compression and origin
-are separate: FLAC can hold previously lossy audio. Mixed-mode codecs stay unknown;
-native FLAC STREAMINFO supplies encoded bit depth when rate/channels match the selected stream; other formats remain unknown. No extension,
-cutoff, high rate or clean-looking plot certifies original losslessness.
+Spectral extent requires four active full windows: the highest non-DC bin present
+in at least 20%, above -90 dBFS/bin and within 50 dB of each window's strongest bin.
+This conservative observation cannot certify transcoding, loudness or listening
+quality. Silence/insufficient evidence is inconclusive. Codec compression and
+origin differ: FLAC may contain previously lossy audio. Mixed-mode codecs stay
+unknown; native FLAC STREAMINFO supplies encoded bit depth only when rate/channels
+match the selected stream. Other formats remain unknown. Extensions, cutoffs,
+high rates and clean-looking plots cannot certify original losslessness.
+Full reports add [lossy-source evidence](lossy-source-detection.md) via a separate model.
 
-Tempo uses per-channel broadband/low-pass energy at 200 bins/s; the same pass
-measures bounded sound edges for [MIX](dj-mix.md).
-Four successive autocorrelation lags distinguish repetition from short-lag side
-peaks; fractional periods and strongest phase clusters avoid integer timing drift
-and averaging between subdivisions. A periodic peak must rise above the noise
-correlation floor. Tempo confidence and observed-beat confidence are separate:
-a supported BPM can have an empty beat timeline. Eight-second neighborhoods retain
-only supported attacks; missing beats are never filled or extrapolated. Windows
-with incompatible tempos stay variable; half/double/meter ambiguity remains.
-Unresolved windows retain at most 128 attack times per envelope (at most 512 KiB
-over 512 windows), never full PCM. Agreeing independent tempo supplies a prior:
-at least four notes, 65% phase agreement and 40% window span must support recovery,
-using a measured anchor within 64 seconds. Recovered intervals have lower confidence
-and cannot authorize SYNC. Silence, off-phase notes, noise and conflicting tempo
-stay unknown; no missing beat timestamps are fabricated.
+Tempo combines 200 Hz energy rises with three 512-frame spectral bands at ~100 FFTs/s
+and independent 2,048-frame bass at ~50 FFTs/s, held between observations. Only bass
+sets its modulation threshold. Analysis uses at most 11,025 Hz, anti-alias filtering
+and channel-power averaging. The same
+pass measures [MIX sound edges](dj-mix.md).
 
-Current rhythm analyzes 64 seconds, then the full track even with MIX off. MIX then
-prepares the queue's next occurrence, respecting shuffle/repeat. The strip follows
-local variable BPM; gaps stay unknown. Jobs have a 10-second deadline, no FFT/plot,
-one worker and two identity-keyed reports. Playback revalidates stream/file before
-lookahead reuse; changed sources or stale generations cannot label another track.
-These reports alone do not authorize transitions. Current requests preempt library
-work; plots share the decoder and wait for rhythm. Library jobs resume afterward.
-libmpv remains the engine; MIX owns validated tempo changes.
+Up to 512 windows retain spectral autocorrelation (~2.5 MiB) and 64 packed events
+per band (~564 KiB). Noise-floor gates and direct recurrence establish an anchor
+in two windows, weighted by duration/local evidence with a soft metrical preference.
+Adjacent windows can establish another tempo without RMS beats; their confirming
+neighbor must not also support the dominant tempo. Metrical relatives alone do
+not establish a change. Strong conflicting evidence wins; unsupported gaps remain.
 
-Analyze decodes the retained file/selected stream in an on-demand libmpv handle,
-reusing loaded libraries. It opens no output device; Float32 WAV enters an owned bounded pipe.
-An idle handle retains libmpv's log callback through overlapping teardown, preventing
-unfiltered stderr. A preload hook selects the exact stream; the WAV reader rejects
-missing or mismatched declared dimensions. EQ,
+Known BPM needs less evidence than discovering tempo: direct recurrence near the
+local maximum, or 1×–4× note changes with first-half phase fitting and second-half
+count/strength/span/chance validation. Offbeat notes can confirm tempo without beat
+phase. Context has lower confidence, no beats and cannot become an anchor or
+authorize SYNC. Half/double/meter ambiguity includes spectral-only changes.
+
+Precise beats use original energy onsets, fractional-period fitting and eight-second
+phase checks. Weak windows retain 128 attacks/envelope (≤512 KiB). Recovery needs
+four notes, 65% phase agreement, 40% span and a measured anchor within 64 seconds.
+Actual attacks can replace an empty tempo-only row for the same interval without
+overlap; confidence stays below SYNC. Beats are never fabricated; silence/noise stay
+unmeasured. Incompatible resolved tempi stay variable; use the [cache upgrade](analysis-cache.md).
+
+Rhythm analyzes 64 seconds, then the full track even with MIX off. MIX prepares the
+queue's next occurrence, respecting shuffle/repeat. The strip follows local BPM;
+gaps stay unknown. Jobs have a 10-second deadline, no spectrogram plot, one worker
+and two identity-keyed reports. Playback revalidates stream/file before lookahead
+reuse; changed sources or stale generations cannot label another track. Reports
+alone do not authorize transitions. Current requests preempt library work; plots
+share the decoder and wait for rhythm. Library jobs resume afterward. libmpv remains
+the engine; MIX owns validated tempo changes.
+
+Analyze decodes the retained file/selected stream through on-demand libmpv, reusing
+loaded libraries without an output device. Float32 WAV enters an owned bounded pipe.
+The idle handle's log callback survives overlapping teardown, preventing unfiltered
+stderr. A preload hook selects the exact stream; the WAV reader rejects absent or
+mismatched declared dimensions. EQ,
 volume processing, ReplayGain, scripts, external references and disk output are
-excluded. The reader closes its pipe before engine teardown to unblock native
-writers. Source identity is revalidated before publication. TRIM/FADE retains its
+excluded. The reader closes its pipe before teardown to unblock native writers.
+Source identity is revalidated before publication. TRIM/FADE retains its
 FFmpeg adapter; both reuse the validated PCM reader/source identity. FFmpeg inputs
 are reopened through retained descriptors for independent cursors on retries.
 
@@ -87,7 +95,8 @@ No source writes. Explicit [Library batches](library-analysis.md) share this sch
 
 ## Key Files
 
-- `crates/resolibre-core/src/analysis/`: matrix, bandwidth, tempo/beats, activity.
+- `crates/resolibre-core/src/analysis/`: matrix, bandwidth, activity;
+  `tempo/{spectral,evidence,resolve,pulse,context}.rs`: tempo/phase evidence.
 - `crates/resolibre-audio/src/rhythm_analysis.rs`, `session/rhythm.rs`: automatic current/next excerpts.
 - `crates/resolibre-audio/src/original_audio/`: decoder and validated PCM.
 - `crates/resolibre-audio/src/native_logging.rs`: shared native log-owner lifetime.
@@ -98,36 +107,38 @@ No source writes. Explicit [Library batches](library-analysis.md) share this sch
 
 ## Tests
 
-Core: calibrated moving tones, silence, short/invalid input, fixed matrix bounds,
-opposite-phase channels, isolated high-frequency spikes, 40/60/90/113/120/128/140/174/220/240 BPM,
-beat timing, variable tempo, noise, gain, layering, subdivisions and contextual sparse notes. Adapter:
-FLAC/MP3/transcodes, filtering, upsampling, misleading extensions, originals,
-log ownership/restart, malformed/cancelled/changed input, one-sample streams,
-multichannel phase, video/default stream selection and repeated retained-file reads. Session: completion during
-playback, pause/cancel/replacement and stale generations; automatic BPM/next-track cache without Analyze. UI: keyboard artwork
-activation, close/focus restoration, frozen inspection/replacement, local BPM/ranges,
-zone selection, unknown gaps and invalid/oversized geometry;
-native 1x/2x captures inspect scales and wrapping. A production UI journey exercises
-Cancel/retry, measured BPM, closing and keyboard reopening. Run workspace tests and the
-`analysis_window::tests::native_analysis_preview` isolated window case.
+Core: calibrated moving tones, silence, short/invalid input, matrix bounds,
+opposite-phase channels, isolated high-frequency spikes, 40–240 BPM fixtures,
+beat timing, variable tempo, noise, gain, layering, subdivisions and sparse notes.
+Context: hi-hats/arpeggios, tempo steps/jitter/acceleration, legato bass/vibrato,
+held-out phase/noise, regional clocks, attack provenance and bounded non-overlapping
+intervals. Adapter: FLAC/MP3/transcodes, filtering, upsampling, misleading extensions,
+original preservation, log ownership/restart, malformed/cancelled/changed input,
+one-sample streams, multichannel phase, video/default streams and repeated retained-file
+reads. Session: completion during playback, pause/cancel/replacement, stale generations
+and automatic BPM/next-track cache without Analyze. UI: keyboard artwork activation,
+close/focus restoration, frozen inspection/replacement, local BPM/ranges, zone
+selection, unknown gaps and invalid/oversized geometry. Native 1x/2x captures check
+scales/wrapping; a production journey checks Cancel/retry, measured BPM, closing
+and keyboard reopening. Run workspace tests and
+`analysis_window::tests::native_analysis_preview`.
 
 `check_playback_responsiveness.py --session-worker --track-analysis --trials 3`
-adds analysis to the private real-audio marker/control workload and samples owned
-child decoder RSS alongside the player. Short runs are not the 100-trial gate;
-platform/device/GPU results must be reported separately.
+adds analysis to the private marker/control audio workload and samples player/owned
+decoder RSS. Short runs do not meet the 100-trial gate; report platform/device/GPU separately.
 
-Earlier Linux runs passed 360 lifecycle cycles (96.47 MiB audio). CPU 6.60–9.79%
-exceeded 5%; software desktop 327/365 MiB exceeded 200 MiB. Hardware rendering,
-100-trial gates and broad music accuracy remain open. Optimized core/RustFFT reduced
-one authorized 232.88 s FLAC analysis from 34.28 s to 1.83 s; its rhythm excerpt took
-0.24 s. These are local observations; no user media is bundled.
+Earlier Linux: 360 lifecycle cycles passed (96.47 MiB audio); CPU 6.60–9.79% exceeded 5%,
+software desktop 327/365 MiB exceeded 200 MiB. Hardware rendering, 100-trial gates
+and broad music accuracy remain open. Optimized core/RustFFT reduced one authorized
+232.88 s FLAC analysis from 34.28 s to 1.83 s; rhythm excerpt: 0.24 s.
+Local observations; no media bundled.
 
 ## Edge Cases
 
 Cached measurements are observations, not verified provenance.
 Variable/no-beat regions must not be extrapolated into a synthetic beat grid.
-Four-hour/deadline limits fail with retry available. Native teardown can depend on
-OS scheduling. File identity guards jobs; audio hashes key persistent results.
+Four-hour/deadline failures allow retry; native teardown depends on OS scheduling.
+File identity guards jobs; audio hashes key persistence.
 Linux execution is validated here; Windows/Android/iOS native decoding, loading,
 packaging and device lifecycles remain unvalidated. Shared Rust code alone does not
 establish a working port. MIX owns transitions separately.

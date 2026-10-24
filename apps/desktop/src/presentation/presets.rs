@@ -179,7 +179,9 @@ impl Controller {
             }
             Some(Ok(Some(Completion::Exported))) => {
                 window.set_eq_notice("Exported".into());
-                window.set_eq_preset_message("Exported. You can share the .resolibre-eq file.".into());
+                window.set_eq_preset_message(
+                    "Exported. You can share the .resolibre-eq file.".into(),
+                );
             }
             Some(Err(error)) => self.preset_error(window, error),
             _ => {}

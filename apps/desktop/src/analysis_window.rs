@@ -1,5 +1,6 @@
 //! Grouped diagnostics retain one immutable inspected result independently of playback navigation.
 
+mod provenance;
 mod timeline;
 
 use crate::{AnalysisWindow, PlayerWindow, presentation::Controller};
@@ -98,12 +99,18 @@ impl AnalysisHost {
         let stream_info = if index == snapshot.current {
             snapshot.stream_info
         } else {
-            None
+            snapshot
+                .audible_next
+                .filter(|next| Some(next.index) == index)
+                .and_then(|next| next.stream_info)
         };
         self.source_duration = if index == snapshot.current {
             snapshot.duration
         } else {
-            None
+            snapshot
+                .audible_next
+                .filter(|next| Some(next.index) == index)
+                .map(|next| next.duration)
         }
         .or_else(|| track.and_then(|track| track.duration_seconds.map(f64::from)));
         self.rendered = None;
@@ -130,6 +137,7 @@ impl AnalysisHost {
         window.set_tempo_zones(Default::default());
         window.invoke_reset_tempo_selection();
         window.set_ready(false);
+        window.set_provenance_text("Lossy-source detection: waiting for audio analysis…".into());
         window.set_tempo_text("BPM: analyzing rhythmic changes…".into());
         window.set_interpretation("Original decoded audio, before EQ and volume. Origin unknown; a lossless codec does not prove an originally lossless recording.".into());
         window.set_facts(
@@ -144,7 +152,14 @@ impl AnalysisHost {
                 .unwrap_or_else(|| "Stream information unavailable".into())
                 .into(),
         );
-        window.set_status_text("Starting analysis…".into());
+        window.set_status_text(
+            if force {
+                "Starting analysis…"
+            } else {
+                "Opening analysis…"
+            }
+            .into(),
+        );
         window.set_running(true);
         let generation = snapshot.generation;
         let command = if let Some(id) = track_id {
@@ -199,15 +214,16 @@ impl AnalysisHost {
         window.set_running(matches!(status, AnalysisStatus::Running { .. }));
         match status {
             AnalysisStatus::Running { decoded_seconds } => {
-                let progress =
-                    if let Some(duration) = self.source_duration.filter(|value| *value > 0.0) {
-                        format!(
-                            "Analyzing original audio… {:.0}% ({decoded_seconds:.1} s decoded)",
-                            (decoded_seconds / duration * 100.0).min(99.0)
-                        )
-                    } else {
-                        format!("Analyzing original audio… {decoded_seconds:.1} s decoded")
-                    };
+                let progress = if *decoded_seconds == 0.0 {
+                    "Opening analysis…".to_string()
+                } else if let Some(duration) = self.source_duration.filter(|value| *value > 0.0) {
+                    format!(
+                        "Analyzing original audio… {:.0}% ({decoded_seconds:.1} s decoded)",
+                        (decoded_seconds / duration * 100.0).min(99.0)
+                    )
+                } else {
+                    format!("Analyzing original audio… {decoded_seconds:.1} s decoded")
+                };
                 window.set_status_text(progress.into());
                 if self.track_id.get().is_none()
                     && let resolibre_audio::session::RhythmStatus::Ready(report) = &snapshot.rhythm
@@ -238,18 +254,20 @@ impl AnalysisHost {
                 );
                 window.set_frequency_note(frequency_note(report.sample_rate_hz).into());
                 window.set_tempo_text(tempo_text(&report.tempo).into());
+                window.set_provenance_text(provenance::describe(report.provenance).into());
                 let precision = self
                     .source_bits
                     .map(|bits| format!("Source bit depth: {bits}-bit."))
                     .unwrap_or_else(|| "Source bit depth: unknown for this format.".into());
                 let bandwidth = report.sustained_bandwidth_hz.map(|hz| format!("Sustained spectral extent: approximately {:.1} kHz.", hz / 1000.0)).unwrap_or_else(|| "Sustained spectral extent: inconclusive (silence, very short or weak audio).".into());
-                window.set_interpretation(format!("{bandwidth} This describes measured frequency content, not listening quality. Filtering, instruments, recording and lossy encoding can all limit bandwidth. {precision} Origin unknown, including for FLAC. Half/double tempo and downbeat interpretation require review before automatic mixing.").into());
+                window.set_interpretation(format!("{bandwidth} Filtering, instruments and recording can also limit bandwidth. {precision} Lossless describes the codec; analysis cannot certify the original recording. Tempo and downbeat interpretation require review before automatic mixing.").into());
                 self.rendered = Some(Arc::clone(report));
             }
             AnalysisStatus::Cancelled | AnalysisStatus::Unavailable => {
                 window.set_ready(false);
                 window.set_plot(Image::default());
                 window.set_tempo_text("BPM: not available".into());
+                window.set_provenance_text("Lossy-source detection: not available".into());
                 self.rendered = None;
                 let message = if matches!(status, AnalysisStatus::Cancelled) {
                     "Analysis cancelled. No partial result is used."
@@ -374,7 +392,15 @@ fn open_action(
             && main.get_analysis_enabled()
             && !main.get_closing()
             && !main.get_settings_loading()
-            && let Err(error) = host.borrow_mut().show(&main, &controller, None, force)
+            && let Err(error) = {
+                let snapshot = controller.borrow().snapshot();
+                let track_id = snapshot
+                    .audible_next
+                    .filter(|_| snapshot.display_next)
+                    .and_then(|next| snapshot.tracks.get(next.index))
+                    .map(|track| track.id);
+                host.borrow_mut().show(&main, &controller, track_id, force)
+            }
         {
             main.set_error_message(error.into());
             eprintln!("warn: {error}");

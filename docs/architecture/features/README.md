@@ -23,3 +23,4 @@ flows in `tools/check_docs.py` (32 KiB including guidance).
 [Track metadata](track-metadata.md): labels/covers/durations.
 
 [Facts](track-information.md); [live spectrum](live-spectrum.md); [spectrogram/BPM](track-analysis.md); [persistent cache](analysis-cache.md); [Library analysis](library-analysis.md).
+[Lossy-source evidence](lossy-source-detection.md): experimental offline model, separate from codec badges.

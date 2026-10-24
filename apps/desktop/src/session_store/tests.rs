@@ -8,6 +8,8 @@ use std::fs;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::PermissionsExt;
 
+const HEADER_BYTES: usize = b"ReSolibre-Session-4\n".len();
+
 /// Creates unique private test storage without depending on wall-clock timing.
 fn directory() -> PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -72,10 +74,10 @@ fn processing_intent_migrates_and_rejects_unknown_modes() {
         let bytes = format::encode(&saved).unwrap();
         assert_eq!(format::decode(&bytes).unwrap(), saved);
         let mut v3 = bytes[..bytes.len() - 1].to_vec();
-        v3[15] = b'3';
+        v3[HEADER_BYTES - 2] = b'3';
         assert_eq!(format::decode(&v3).unwrap(), saved);
         let mut v2 = bytes[..bytes.len() - 4].to_vec();
-        v2[15] = b'2';
+        v2[HEADER_BYTES - 2] = b'2';
         assert_eq!(format::decode(&v2).unwrap(), saved);
         for offset in 1..=4 {
             let mut invalid = bytes.clone();
@@ -90,7 +92,7 @@ fn processing_intent_migrates_and_rejects_unknown_modes() {
             assert!(format::decode(&invalid).is_err());
         }
         let mut legacy = bytes[..bytes.len() - 6].to_vec();
-        legacy[15] = b'1';
+        legacy[HEADER_BYTES - 2] = b'1';
         let restored = format::decode(&legacy).unwrap();
         let mut expected = saved.clone();
         expected.audio.edges = PlaybackEdges::default();
@@ -106,7 +108,7 @@ fn mix_intent_roundtrips_and_old_profiles_stay_disabled() {
     let bytes = format::encode(&saved).unwrap();
     assert_eq!(format::decode(&bytes).unwrap(), saved);
     let mut old = bytes[..bytes.len() - 1].to_vec();
-    old[15] = b'3';
+    old[HEADER_BYTES - 2] = b'3';
     saved.audio.mix_enabled = false;
     assert_eq!(format::decode(&old).unwrap(), saved);
 }
@@ -119,8 +121,8 @@ fn format_roundtrip_and_rejection() {
     assert_eq!(format::decode(&bytes).unwrap(), saved);
     for (legacy, expected) in [(-24.0_f64, -2.0), (12.0, 2.0)] {
         let mut legacy_bytes = bytes[..bytes.len() - 6].to_vec();
-        legacy_bytes[15] = b'1';
-        legacy_bytes[26..34].copy_from_slice(&legacy.to_le_bytes());
+        legacy_bytes[HEADER_BYTES - 2] = b'1';
+        legacy_bytes[HEADER_BYTES + 9..HEADER_BYTES + 17].copy_from_slice(&legacy.to_le_bytes());
         let mut expected_session = saved.clone();
         expected_session.audio.equalizer = Equalizer::new(true, [3.0; 10], expected).unwrap();
         assert_eq!(format::decode(&legacy_bytes).unwrap(), expected_session);
@@ -136,24 +138,24 @@ fn format_roundtrip_and_rejection() {
     extra.push(0);
     assert!(format::decode(&extra).is_err());
     let mut version = bytes.clone();
-    version[15] = b'9';
+    version[HEADER_BYTES - 2] = b'9';
     assert!(format::decode(&version).is_err());
     let mut invalid = bytes.clone();
-    invalid[17..25].copy_from_slice(&f64::NAN.to_le_bytes());
-    // The format header is 17 bytes; no NaN may reach Volume or EQ.
+    invalid[HEADER_BYTES..HEADER_BYTES + 8].copy_from_slice(&f64::NAN.to_le_bytes());
+    // No NaN in the body may reach Volume or EQ.
     assert!(format::decode(&invalid).is_err());
     assert!(format::decode(&vec![0; format::MAX_BYTES as usize + 1]).is_err());
     for (offset, replacement) in [
-        (25, vec![2]), // EQ enable flag.
-        (26, f64::INFINITY.to_le_bytes().to_vec()),
-        (34, 13.0_f64.to_le_bytes().to_vec()), // Out-of-range band gain.
-        (114, vec![2]),                        // Shuffle flag.
-        (115, vec![3]),                        // Unknown repeat mode.
-        (116, 3_u32.to_le_bytes().to_vec()),   // Invalid selected occurrence.
-        (120, u32::MAX.to_le_bytes().to_vec()), // Huge occurrence count.
-        (124, u32::MAX.to_le_bytes().to_vec()), // Huge path length.
-        (128, vec![b'r']),                     // Relative path.
-        (129, vec![0]),                        // NUL inside a path.
+        (HEADER_BYTES + 8, vec![2]), // EQ enable flag.
+        (HEADER_BYTES + 9, f64::INFINITY.to_le_bytes().to_vec()),
+        (HEADER_BYTES + 17, 13.0_f64.to_le_bytes().to_vec()), // Out-of-range band gain.
+        (HEADER_BYTES + 97, vec![2]),                         // Shuffle flag.
+        (HEADER_BYTES + 98, vec![3]),                         // Unknown repeat mode.
+        (HEADER_BYTES + 99, 3_u32.to_le_bytes().to_vec()),    // Invalid selected occurrence.
+        (HEADER_BYTES + 103, u32::MAX.to_le_bytes().to_vec()), // Huge occurrence count.
+        (HEADER_BYTES + 107, u32::MAX.to_le_bytes().to_vec()), // Huge path length.
+        (HEADER_BYTES + 111, vec![b'r']),                     // Relative path.
+        (HEADER_BYTES + 112, vec![0]),                        // NUL inside a path.
     ] {
         let mut invalid = bytes.clone();
         invalid[offset..offset + replacement.len()].copy_from_slice(&replacement);

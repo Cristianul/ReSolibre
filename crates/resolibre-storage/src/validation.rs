@@ -61,6 +61,11 @@ pub(crate) fn track(report: &TrackAnalysis) -> bool {
             value.is_finite() && (0.0..=f64::from(report.sample_rate_hz) / 2.0).contains(&value)
         })
         && tempo(&report.tempo)
+        && report.provenance.is_valid_for(
+            report.sample_rate_hz,
+            report.channels,
+            report.duration_seconds,
+        )
         && report.tempo.activity.analyzed_seconds <= report.duration_seconds + 0.01
         && report
             .tempo

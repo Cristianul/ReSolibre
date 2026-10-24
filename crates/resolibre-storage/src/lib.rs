@@ -17,7 +17,7 @@ use std::time::Duration;
 const MAX_RESULT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ROWS: usize = 1000;
 const MAX_PAYLOAD_BYTES: usize = 192 * 1024 * 1024;
-const SCHEMA: i64 = 3;
+const SCHEMA: i64 = 6;
 
 /// One connection owned by an analysis worker; neither UI nor playback callbacks use SQLite.
 pub struct AnalysisCache {
@@ -87,10 +87,10 @@ impl AnalysisCache {
                     payload BLOB NOT NULL, accessed INTEGER NOT NULL,
                     PRIMARY KEY(hash,kind));
                 CREATE INDEX IF NOT EXISTS analysis_access ON analyses(accessed);
-                PRAGMA user_version=3; COMMIT;",
+                PRAGMA user_version=6; COMMIT;",
                 )
                 .map_err(|_| CacheError)?;
-        } else if matches!(version, 1 | 2) {
+        } else if matches!(version, 1..=5) {
             migrate_analysis_cache(&connection)?;
         } else if version != SCHEMA {
             return Err(CacheError);
@@ -262,7 +262,7 @@ impl AnalysisCache {
     }
 }
 
-/// Invalidates older activity/tempo measurements atomically; media and other application settings are untouched.
+/// Invalidates incompatible reports atomically; schema 5 retains rhythm and refreshes provenance/full results.
 fn migrate_analysis_cache(connection: &Connection) -> Result<(), CacheError> {
     connection
         .execute_batch("BEGIN IMMEDIATE;")
@@ -271,9 +271,13 @@ fn migrate_analysis_cache(connection: &Connection) -> Result<(), CacheError> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(|_| CacheError)?;
-    if matches!(version, 1 | 2) {
+    if matches!(version, 1..=4) {
         connection
-            .execute_batch("DELETE FROM analyses; PRAGMA user_version=3;")
+            .execute_batch("DELETE FROM analyses; PRAGMA user_version=6;")
+            .map_err(|_| CacheError)?;
+    } else if version == 5 {
+        connection
+            .execute_batch("DELETE FROM analyses WHERE kind=2; PRAGMA user_version=6;")
             .map_err(|_| CacheError)?;
     } else if version != SCHEMA {
         return Err(CacheError);

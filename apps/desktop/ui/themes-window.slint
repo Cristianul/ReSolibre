@@ -2,7 +2,7 @@ import { Theme } from "components/theme.slint";
 import { Branding } from "components/branding.slint";
 import { ActionButton } from "components/controls.slint";
 import { DialFace } from "components/instruments.slint";
-import { WindowHeader, WindowSurface, DrawerSurface } from "components/window-header.slint";
+import { WindowDragArea, WindowHeader, WindowSurface, DrawerSurface } from "components/window-header.slint";
 
 // Passive previews reuse the player materials; selection uses the shared accessible button.
 component ThemeOption inherits Rectangle {
@@ -43,6 +43,7 @@ export component ThemesWindow inherits Window {
     default-font-family: "Sans Serif";
     in property <bool> spectrum;
     callback choose-theme(bool);
+    WindowDragArea { x: 6px; y: 6px; width: root.width - 12px; height: root.height - 12px; }
     WindowSurface { }
     VerticalLayout {
         padding: 12px; spacing: 12px;

@@ -36,6 +36,8 @@ intro/outro, limited to 16 seconds and 10% of that track's effective duration,
 whichever is smaller. It affects only the outgoing end and incoming beginning;
 MIX preserves the first intro, final ending and internal pauses.
 Ordinary TRIM intent remains independent. No music file is changed.
+While a new track plays during pending TRIM measurement, MIX waits for its
+confirmed outgoing bounds before building a transition plan.
 
 Prefer equal BPM within ±20% on both streams. Otherwise choose among 1:2, 1:3,
 2:3 and inverses, minimizing the largest rate adjustment. Complete shared cycles
@@ -81,12 +83,16 @@ Complementary linear gains bound correlated mix peaks;
 application volume and EQ remain shared intent. Boundary FADE is suppressed during
 overlap and restored when ordinary playback resumes.
 
-The seek bar marks the confirmed overlap with a red-orange start tick and hatched
-range on the original timeline. Pending, disabled or invalidated plans show no range.
-Pre-overlap seeks retain muted preparation, including during pause.
-Native seek reconstruction must finish first; stale seeks cannot cancel it. Seeking during audible overlap cancels
-and prepares again, restoring ordinary speed/gain before moving the current stream.
-Pause addresses both streams; transport/queue edits cancel MIX.
+The original-time seek bar marks confirmed overlap with orange boundary ticks and hatch;
+invalid or pending plans show none. Pre-overlap seeks retain muted preparation.
+Native seek reconstruction finishes first; audible-overlap seeks cancel MIX and
+restore speed/gain before moving. Pause affects both streams. The Library marks
+both audible occurrences; the title switches quickly (instantly with reduced
+motion). Next focuses incoming without audio handover. Artwork, stream facts,
+analysis action and seek bar follow it. The incoming bar marks its overlap near
+the start; `MIX ≈m:ss` beside the clock estimates remaining outgoing source time.
+Seeking this bar adopts incoming; Previous returns focus to outgoing. Stale seeks
+cannot affect later tracks. Other navigation and queue edits cancel MIX.
 MIX-off restores speed/gain/edges over 150 ms, including the outgoing approach.
 Next-source failure preserves playback, logging one redacted stage/error warning.
 Handover advances the queue once and adopts the running stream without replaying its intro. No scripts, external references, system-mix capture or new decoder are introduced.

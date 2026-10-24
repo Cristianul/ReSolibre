@@ -82,6 +82,9 @@ fn playlist_visibility_reuses_window_and_actions() {
     assert_eq!(&*selected.borrow(), "41");
     assert_eq!(&*calls.borrow(), &[("41".to_string(), true)]);
     main.set_current(80);
+    main.set_other_current(81);
+    host.borrow().refresh(&main);
+    assert_eq!(playlist.get_other_current(), 81);
     main.invoke_reveal_current();
     assert_eq!(playlist.get_selected_id(), "81");
     assert!(playlist.get_playlist_scroll() < -2000.0);

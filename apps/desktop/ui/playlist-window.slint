@@ -1,6 +1,6 @@
 import { ImportMenu } from "components/import-menu.slint";
 import { Branding } from "components/branding.slint";
-import { WindowSurface } from "components/window-header.slint";
+import { WindowDragArea, WindowSurface } from "components/window-header.slint";
 import { Theme } from "components/theme.slint";
 import { PlaylistPanel, TrackRow, AnalysisRow } from "components/playlist-panel.slint";
 
@@ -30,11 +30,14 @@ export component PlaylistWindow inherits Window {
     callback cancel-analysis();
     in property <string> total-duration: "00:00";
     in property <int> current: -1;
+    in property <int> other-current: -1;
     in-out property <string> search-query;
     in-out property <bool> search-open;
     out property <[TrackRow]> visible-tracks: root.filter-tracks(root.tracks, root.search-query);
     out property <int> visible-current: root.current >= 0 && root.current < root.tracks.length
         ? root.find-track(root.visible-tracks, root.tracks[root.current].id) : -1;
+    out property <int> visible-other-current: root.other-current >= 0 && root.other-current < root.tracks.length
+        ? root.find-track(root.visible-tracks, root.tracks[root.other-current].id) : -1;
     pure callback filter-tracks([TrackRow], string) -> [TrackRow];
     pure callback find-track([TrackRow], string) -> int;
     pure callback limit-query(string) -> string;
@@ -78,6 +81,11 @@ export component PlaylistWindow inherits Window {
     callback move-track(string, bool);
     callback reorder-track(string, string, bool);
 
+    // Passive margins and footer readouts move this window; rows and buttons keep their gestures.
+    WindowDragArea {
+        x: 6px; y: 6px; width: root.width - 12px; height: root.height - 12px;
+        movable: !root.closing && !root.drop-menu;
+    }
     WindowSurface { }
     VerticalLayout {
         padding: 12px;
@@ -97,7 +105,7 @@ export component PlaylistWindow inherits Window {
                 view-track-analysis(id) => { root.view-track-analysis(id); }
                 analyze-all => { root.analyze-all(); }
                 cancel-analysis => { root.cancel-analysis(); }
-                tracks: root.visible-tracks; current: root.visible-current;
+                tracks: root.visible-tracks; current: root.visible-current; other-current: root.visible-other-current;
                 total-tracks: root.tracks.length; total-duration: root.total-duration;
                 search-query <=> root.search-query; search-open <=> root.search-open;
                 limit-query(query) => { root.limit-query(query) }

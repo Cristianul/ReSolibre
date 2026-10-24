@@ -58,6 +58,19 @@ pub enum MixStatus {
     Unavailable,
 }
 
+/// The second audible occurrence during an overlap, independently of queue ownership.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AudibleNext {
+    pub index: usize,
+    pub position: f64,
+    pub duration: f64,
+    pub gain: f64,
+    /// Planned overlap on the incoming source timeline.
+    pub mix_region: Option<resolibre_core::playback_edges::PlaybackRegion>,
+    pub seekable: bool,
+    pub stream_info: Option<resolibre_core::track_info::StreamInfo>,
+}
+
 /// Latest session observation, replacing rather than accumulating old events.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
@@ -66,6 +79,10 @@ pub struct Snapshot {
     pub mix_enabled: bool,
     pub mix_status: MixStatus,
     pub mix_beat_ratio: Option<resolibre_core::transition::BeatRatio>,
+    /// Present only while the prepared next stream contributes audible gain.
+    pub audible_next: Option<AudibleNext>,
+    /// Next changes the displayed timeline during overlap without advancing audio.
+    pub display_next: bool,
     /// Prepared overlap bounds in original source seconds; absent until ready.
     pub mix_region: Option<resolibre_core::playback_edges::PlaybackRegion>,
     pub edge_status: EdgeStatus,
@@ -78,6 +95,9 @@ pub struct Snapshot {
     pub cover: Option<Arc<crate::metadata::Cover>>,
     pub cover_revision: u64,
     pub cover_pending: bool,
+    pub next_cover: Option<Arc<crate::metadata::Cover>>,
+    pub next_cover_revision: u64,
+    pub next_cover_pending: bool,
     pub current: Option<usize>,
     pub state: SessionState,
     pub position: Option<f64>,
@@ -115,6 +135,8 @@ impl Default for Snapshot {
             mix_status: MixStatus::Off,
             mix_region: None,
             mix_beat_ratio: None,
+            audible_next: None,
+            display_next: false,
             edge_status: EdgeStatus::Off,
             trim_start: 0.0,
             trim_end: None,
@@ -125,6 +147,9 @@ impl Default for Snapshot {
             cover: None,
             cover_revision: 0,
             cover_pending: false,
+            next_cover: None,
+            next_cover_revision: 0,
+            next_cover_pending: false,
             current: None,
             state: SessionState::Idle,
             position: None,

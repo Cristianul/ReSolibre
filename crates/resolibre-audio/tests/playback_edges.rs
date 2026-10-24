@@ -1,7 +1,7 @@
 //! Real decoder/session regressions use generated private files and silent output only.
 use resolibre_audio::{
     AudioOutput,
-    session::{Command, EdgeStatus, Session, Snapshot},
+    session::{Command, EdgeStatus, MixStatus, Session, Snapshot},
 };
 use resolibre_core::{
     playback_edges::{EdgeAction, FadeMode, PlaybackEdges},
@@ -79,6 +79,44 @@ fn wait(session: &Session, predicate: impl Fn(&Snapshot) -> bool) -> Snapshot {
         );
         thread::sleep(Duration::from_millis(5));
     }
+}
+
+/// Cold TRIM starts with the original audio clock, then moves to the measured opening edge.
+#[test]
+fn cold_trim_plays_while_analysis_runs_and_updates_position() {
+    let (path, original) = fixture();
+    let session = Session::start(AudioOutput::Silent).unwrap();
+    session
+        .submit(Command::Edges(EdgeAction::ToggleTrim))
+        .unwrap();
+    session.submit(Command::SetMix(true)).unwrap();
+    session
+        .submit(Command::Open(vec![path.clone(), path.clone()]))
+        .unwrap();
+
+    let pending = wait(&session, |snapshot| {
+        snapshot.state == SessionState::Playing
+            && snapshot.edge_status == EdgeStatus::Pending
+            && snapshot.seekable
+    });
+    assert_eq!(pending.trim_start, 0.0);
+    assert_eq!(pending.mix_status, MixStatus::Preparing);
+    assert!(pending.position.is_some_and(|position| position < 0.75));
+
+    session.submit(Command::TogglePause).unwrap();
+    let ready = wait(&session, |snapshot| {
+        snapshot.state == SessionState::Paused
+            && snapshot.edge_status == EdgeStatus::Ready
+            && snapshot.seekable
+            && snapshot.position.is_some_and(|position| position >= 0.74)
+    });
+    assert!((ready.trim_start - 0.75).abs() < 0.005);
+    assert_eq!(ready.generation, pending.generation);
+
+    session.request_shutdown();
+    drop(session);
+    assert_eq!(fs::read(&path).unwrap(), original);
+    fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
 
 /// Trim is shared by seek, scan and queue EOF; toggles preserve source time and interior silence.

@@ -4,7 +4,7 @@ export { TempoZone }
 import { Theme } from "components/theme.slint";
 import { Branding } from "components/branding.slint";
 import { ActionButton } from "components/controls.slint";
-import { WindowHeader, WindowSurface } from "components/window-header.slint";
+import { WindowDragArea, WindowHeader, WindowSurface } from "components/window-header.slint";
 
 export component AnalysisWindow inherits Window {
     in property <bool> library-inspection;
@@ -21,6 +21,7 @@ export component AnalysisWindow inherits Window {
     in property <string> status-text;
     in property <string> frequency-note;
     in property <string> interpretation;
+    in property <string> provenance-text;
     in property <string> tempo-text;
     in property <[TempoZone]> tempo-zones;
     private property <int> selected-tempo: -1;
@@ -37,6 +38,7 @@ export component AnalysisWindow inherits Window {
     in property <bool> running;
     callback cancel-analysis();
     callback retry-analysis();
+    WindowDragArea { x: 6px; y: 6px; width: root.width - 12px; height: root.height - 12px; }
     WindowSurface { }
     VerticalLayout {
         padding: 12px; spacing: 8px;
@@ -95,6 +97,7 @@ export component AnalysisWindow inherits Window {
             accessible-live-region: polite;
         }
         Text { text: root.tempo-text; color: Theme.text; font-size: 14px; wrap: word-wrap; }
+        Text { text: root.provenance-text; color: Theme.text; font-size: 12px; wrap: word-wrap; accessible-live-region: polite; }
         Text { text: root.interpretation; color: Theme.muted; font-size: 12px; wrap: word-wrap; }
         HorizontalLayout {
             Rectangle { horizontal-stretch: 1; }

@@ -65,8 +65,11 @@ impl LocalPlayer {
         // Only startup or a newly excluded edge needs a flush. Paused edits also retain
         // queued samples; repeated seeks would accumulate the output clock's latency.
         if preparing_start || outside {
+            let target = edges.map_or(position, |(region, _)| {
+                position.clamp(region.start, region.end)
+            });
             self.seek_with_equalizer(
-                resolibre_core::SeekPosition::from_seconds(position)
+                resolibre_core::SeekPosition::from_seconds(target)
                     .ok_or(PlaybackError::InvalidEvent)?,
                 equalizer,
             )?;

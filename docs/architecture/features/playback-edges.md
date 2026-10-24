@@ -31,10 +31,16 @@ edges. Seeking into yellow clamps to the effective boundary. Scanning holds on t
 current track; ordinary forward completion uses existing queue policy. Live toggles
 preserve source position when inside the new bounds and retain pause intent.
 
-Initial playback waits in Loading for complete measurements; Stop/navigation can
-cancel. Enabling processing on an already-started track analyzes in the background
-while playback, pause and seek remain usable. Completion respects the latest pause
-intent. Partial results never change playback bounds.
+Initial playback starts with original bounds while TRIM/FADE measurement runs in the
+background. When complete, it applies the measured bounds and moves playback and
+the source-time seek bar to the first retained sound if the current position is
+excluded. Playback, pause and seek remain usable during measurement; completion
+respects the latest pause intent. Stop/navigation cancel stale work. Partial
+results never change playback bounds.
+MIX waits for the current track's final TRIM bounds before planning an overlap;
+the current audio continues during that wait.
+Audio heard before measurement completes uses the original bounds and bypassed
+fade filters; a very short opening may finish before its fade is available.
 
 Live in-range changes retain buffered audio: no forced pause or position-preserving
 seek. TRIM changes native bounds; FADE updates two fixed, initially bypassed
@@ -89,6 +95,8 @@ Live-toggle regression: `python3 tools/check_live_edges.py` reproduced discontin
 output before the fix. Afterwards ten live and five paused TRIM/FADE changes each
 on WAV/FLAC retained source continuity through an isolated PipeWire/Pulse monitor.
 Runtime fade-out activation/removal is measured on a separate sine fixture.
+Cold-start session regression covers playback during pending analysis, the later
+seek-bar correction and pause intent.
 The closed test protocol also checks processing completed, rejects malformed settings
 and preserves original bytes. Session tests cover live pending analysis and pause
 intent; the eight existing PCM captures retain fade/seek and encoded-input coverage.

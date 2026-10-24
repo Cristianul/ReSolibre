@@ -10,6 +10,7 @@
 | [FFI](../../crates/resolibre-audio/src/ffi.rs) | API |
 | [Platform I/O](../../crates/resolibre-audio/src/platform.rs) | [Windows](../development/windows-native.md) retained files/pipes |
 | [Analysis](features/track-analysis.md) | [Live](features/live-spectrum.md)/[cache](features/analysis-cache.md)/[batch](features/library-analysis.md) |
+| [Provenance](features/lossy-source-detection.md) | Offline lossy-source evidence/model |
 | [Metadata](features/track-metadata.md) | Tags/covers |
 | [local-play](../../crates/resolibre-audio/examples/local-play.rs) | CLI/memory |
 | [Tests](../../crates/resolibre-audio/tests/local_playback.rs) | Playback |

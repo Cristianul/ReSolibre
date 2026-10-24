@@ -359,19 +359,41 @@ fn context_recovers_sparse_notes_without_filling_silence_or_unrelated_attacks() 
             ((state >> 32) as u32 as f64 / f64::from(u32::MAX) - 0.5) as f32 * 0.02
         })
         .collect();
-    for middle in [vec![0.0; 32 * 8000], sparse_notes(&notes, 0.0), noise] {
+    for (kind, middle) in [("silence", vec![0.0; 32 * 8000]), ("noise", noise)] {
         let mut analyzer = TempoAnalyzer::new(8000, 1);
         analyzer.push(&pulses(120.0, 32, 1, 8000));
         analyzer.push(&middle);
         analyzer.push(&pulses(120.0, 32, 1, 8000));
+        let report = analyzer.finish();
         assert!(
-            !analyzer
-                .finish()
+            !report
                 .segments
                 .iter()
-                .any(|segment| segment.start_seconds == 32.0)
+                .any(|segment| segment.start_seconds == 32.0),
+            "{kind}: {report:?}"
         );
     }
+}
+
+/// Consistently shifted melodic notes can confirm tempo while remaining unusable as aligned beats.
+#[test]
+fn contextual_offbeat_notes_do_not_claim_the_percussion_phase() {
+    let notes = [1.0, 3.5, 8.0, 11.0, 17.5, 23.0, 28.5];
+    let mut analyzer = TempoAnalyzer::new(8000, 1);
+    analyzer.push(&pulses(120.0, 32, 1, 8000));
+    analyzer.push(&sparse_notes(&notes, 0.0));
+    analyzer.push(&pulses(120.0, 32, 1, 8000));
+    let report = analyzer.finish();
+    let middle = report
+        .segments
+        .iter()
+        .find(|segment| segment.start_seconds == 32.0)
+        .expect("melodic timing supports tempo despite its different phase");
+    assert!((middle.bpm - 120.0).abs() < 1.0);
+    assert!(middle.beats.is_empty());
+    assert!(middle.beat_confidence.is_none());
+    assert!(middle.subdivision_ambiguous);
+    assert!(middle.confidence <= 0.5);
 }
 
 /// Generates owned soft, decaying pitched attacks at chosen source times, without a percussion track.

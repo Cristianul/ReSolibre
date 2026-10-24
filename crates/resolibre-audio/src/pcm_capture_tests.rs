@@ -53,9 +53,10 @@ fn capture_fixture() -> Result<(), PlaybackError> {
     }
 
     let mut player = if let Some(percent) = mode.strip_prefix("volume-") {
-        let volume =
-            resolibre_core::session::Volume::from_percent(percent.parse().expect("fixed volume mode"))
-                .expect("validated volume");
+        let volume = resolibre_core::session::Volume::from_percent(
+            percent.parse().expect("fixed volume mode"),
+        )
+        .expect("validated volume");
         LocalPlayer::open_for_session(
             input,
             AudioOutput::CapturePcm { resample: false },

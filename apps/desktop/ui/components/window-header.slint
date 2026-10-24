@@ -59,7 +59,32 @@ export component PulloutDrawer inherits Rectangle {
     }
 }
 
-// Shared window chrome; only the title region drags, so toolbar controls keep their gestures.
+// Native movement for passive surfaces; controls placed above it keep their gestures.
+export component WindowDragArea inherits WindowMoveArea {
+    in property <bool> movable: true;
+    out property <bool> hovered: touch.has-hover;
+    callback begin-group-move() -> bool;
+    callback update-group-move();
+    callback end-group-move();
+    private property <bool> group-moving;
+    enabled: root.movable && !root.group-moving;
+    touch := TouchArea {
+        enabled: root.movable;
+        pointer-event(event) => {
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                root.group-moving = root.begin-group-move();
+            }
+            if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) || event.kind == PointerEventKind.cancel {
+                if root.group-moving { root.end-group-move(); }
+                root.group-moving = false;
+            }
+        }
+        moved => { if root.group-moving { root.update-group-move(); } }
+    }
+    @children
+}
+
+// Shared window chrome; toolbar controls retain independent gestures.
 export component WindowHeader inherits Rectangle {
     in property <string> title: "ReSolibre";
     in property <bool> enabled: true;
@@ -72,29 +97,18 @@ export component WindowHeader inherits Rectangle {
     callback begin-group-move() -> bool;
     callback update-group-move();
     callback end-group-move();
-    private property <bool> group-moving;
     height: 26px;
     accessible-role: window-title-bar;
     accessible-label: root.title;
     HorizontalLayout {
         spacing: 4px;
-        WindowMoveArea {
-            enabled: root.enabled && !root.group-moving;
+        WindowDragArea {
+            movable: root.enabled;
             min-width: 86px;
             horizontal-stretch: 1;
-            TouchArea {
-                enabled: root.enabled;
-                pointer-event(event) => {
-                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
-                        root.group-moving = root.begin-group-move();
-                    }
-                    if (event.button == PointerEventButton.left && event.kind == PointerEventKind.up) || event.kind == PointerEventKind.cancel {
-                        if root.group-moving { root.end-group-move(); }
-                        root.group-moving = false;
-                    }
-                }
-                moved => { if root.group-moving { root.update-group-move(); } }
-            }
+            begin-group-move => { root.begin-group-move() }
+            update-group-move => { root.update-group-move(); }
+            end-group-move => { root.end-group-move(); }
             HorizontalLayout {
                 spacing: 4px;
                 Rectangle {

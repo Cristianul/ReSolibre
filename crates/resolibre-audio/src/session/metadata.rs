@@ -29,6 +29,8 @@ pub(super) struct MetadataRuntime {
     warmed: bool,
     current: Option<u64>,
     cover_attempted: bool,
+    preview: Option<u64>,
+    preview_attempted: bool,
     warned: bool,
 }
 
@@ -88,10 +90,36 @@ impl MetadataRuntime {
         }
         self.pending = None;
         self.current = current;
-        self.cover_attempted = false;
-        snapshot.cover = None;
-        snapshot.cover_pending = current.is_some();
+        self.cover_attempted = current.is_some()
+            && current == self.preview
+            && self.preview_attempted
+            && !snapshot.next_cover_pending;
+        snapshot.cover = if current == self.preview {
+            snapshot.next_cover.take()
+        } else {
+            None
+        };
+        snapshot.cover_pending = current.is_some() && !self.cover_attempted;
         snapshot.cover_revision += 1;
+    }
+
+    /// Preloads the retained next occurrence's cover with the same single bounded metadata job.
+    pub fn preview(&mut self, next: Option<u64>, snapshot: &mut Snapshot) {
+        if self.preview == next {
+            return;
+        }
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| !pending.cover || Some(pending.id) == self.preview)
+        {
+            self.pending = None;
+        }
+        self.preview = next;
+        self.preview_attempted = false;
+        snapshot.next_cover = None;
+        snapshot.next_cover_pending = next.is_some();
+        snapshot.next_cover_revision += 1;
     }
 
     /// Reopening an occurrence revalidates its source; repeated playback cannot reuse a replaced cover.
@@ -167,6 +195,10 @@ impl MetadataRuntime {
                     snapshot.cover_pending = false;
                     snapshot.cover_revision += 1;
                 }
+                if cover && self.preview == Some(id) {
+                    snapshot.next_cover_pending = false;
+                    snapshot.next_cover_revision += 1;
+                }
                 match result {
                     Ok(details) => {
                         self.labels.insert(
@@ -178,7 +210,10 @@ impl MetadataRuntime {
                             },
                         );
                         if cover && self.current == Some(id) {
-                            snapshot.cover = details.cover;
+                            snapshot.cover = details.cover.clone();
+                        }
+                        if cover && self.preview == Some(id) {
+                            snapshot.next_cover = details.cover;
                         }
                     }
                     Err(()) => {
@@ -207,7 +242,11 @@ impl MetadataRuntime {
             }
         }
         let current = queue.current().filter(|_| !self.cover_attempted);
-        let index = current.or_else(|| {
+        let preview = self
+            .preview
+            .filter(|_| !self.preview_attempted)
+            .and_then(|id| queue.index_of(id));
+        let index = current.or(preview).or_else(|| {
             queue
                 .entries()
                 .iter()
@@ -217,9 +256,11 @@ impl MetadataRuntime {
             return;
         };
         let entry = &queue.entries()[index];
-        let cover = current.is_some();
-        if cover {
+        let cover = current.is_some() || preview == Some(index);
+        if current.is_some() {
             self.cover_attempted = true;
+        } else if preview == Some(index) {
+            self.preview_attempted = true;
         }
         match Job::start_cached(entry.source.clone(), cover, self.persistent.clone()) {
             Ok(job) => {
@@ -232,10 +273,49 @@ impl MetadataRuntime {
             Err(()) => {
                 self.labels.entry(entry.id).or_default();
                 if cover {
-                    snapshot.cover_pending = false;
-                    snapshot.cover_revision += 1;
+                    if current.is_some() {
+                        snapshot.cover_pending = false;
+                        snapshot.cover_revision += 1;
+                    } else {
+                        snapshot.next_cover_pending = false;
+                        snapshot.next_cover_revision += 1;
+                    }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A completed preview becomes the selected cover, while unfinished work remains pending.
+    #[test]
+    fn promotion_uses_only_completed_matching_preview() {
+        let mut runtime = MetadataRuntime::default();
+        let mut snapshot = Snapshot::default();
+        runtime.select(Some(1), &mut snapshot);
+        runtime.preview(Some(2), &mut snapshot);
+        runtime.preview_attempted = true;
+        let cover = Arc::new(crate::metadata::Cover {
+            rgba: vec![0; 4].into(),
+        });
+        snapshot.next_cover = Some(Arc::clone(&cover));
+        snapshot.next_cover_pending = false;
+
+        runtime.select(Some(2), &mut snapshot);
+        assert!(Arc::ptr_eq(snapshot.cover.as_ref().unwrap(), &cover));
+        assert!(!snapshot.cover_pending);
+
+        runtime.preview(Some(3), &mut snapshot);
+        runtime.preview_attempted = true;
+        runtime.select(Some(3), &mut snapshot);
+        assert!(snapshot.cover.is_none());
+        assert!(snapshot.cover_pending);
+
+        runtime.preview(None, &mut snapshot);
+        assert!(snapshot.next_cover.is_none());
+        assert!(!snapshot.next_cover_pending);
     }
 }

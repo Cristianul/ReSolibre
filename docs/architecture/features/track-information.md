@@ -20,7 +20,7 @@ created. Missing properties remain unknown; optional query failure clears the
 facts and logs one sanitized warning per opened track without stopping playback.
 
 During Play/Pause, the line below the title shows e.g.
-`Lossless · 44.1 kHz · 16-bit · Stereo · ≈ 120.0 BPM`. Mono/stereo are named; other counts are displayed as
+`FLAC · 44.1 kHz · 16-bit · Stereo · ≈ 120.0 BPM`. Mono/stereo are named; other counts are displayed as
 `N channels`, without guessing speaker layout. Rates retain whole-Hz precision.
 Errors/import notices take precedence; loading, scanning and unavailable/pending
 TRIM/FADE retain their state messages. Stop/EOF/failure/replacement clear facts;
@@ -30,13 +30,19 @@ Both take priority over other analysis. Variable recordings show measured local 
 at the playhead (including seek); unmeasured sections show `BPM unavailable`.
 During preparation the line says `BPM analyzing…`. Values remain estimates; no
 number is fabricated for silence or uncertain rhythm.
+During a MIX overlap, Next focuses the incoming stream: the strip uses its
+observed codec, rate and position-matched BPM. Missing incoming facts stay unknown
+until available; it never shows the outgoing stream's facts as the incoming ones.
 
 Codec names come from an exact allowlist of native identifiers, never filenames
-or native descriptive text. Known lossless encodings use a compact green/cyan
-**Lossless** badge with a Lucide infinity glyph; other encodings retain their codec
-name (MP3, AAC, etc.). Hybrid WavPack/DTS stay named without a lossless claim.
-The badge describes encoding, not original provenance. Unknown identifiers stay `Unknown codec`. Decoder
-working precision is not encoded bit depth. A bounded native-FLAC STREAMINFO read
+or native descriptive text. Known lossless encodings show a compact green/cyan
+**Lossless** badge with a Lucide infinity glyph alongside the observed codec
+name (FLAC, ALAC, PCM, etc.). Other encodings retain their codec name (MP3, AAC,
+etc.). Hybrid WavPack/DTS stay named without a lossless claim. The badge
+describes encoding, not original provenance, and centers its glyph and text
+independently at 1×/2× scale.
+Unknown identifiers stay `Unknown codec`. Decoder working precision is not encoded
+bit depth. A bounded native-FLAC STREAMINFO read
 supplies bit depth only when source rate/channels match; other formats stay unknown. No lossless-origin,
 authenticity, spectral bandwidth or listening-quality verdict is produced.
 

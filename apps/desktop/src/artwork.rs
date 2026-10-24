@@ -1,4 +1,4 @@
-//! Converts only the session's bounded current thumbnail; decoding belongs to the metadata worker.
+//! Converts the bounded thumbnail for the track currently shown by the transport.
 
 use crate::PlayerWindow;
 use resolibre_audio::metadata::{COVER_SIDE, Cover};
@@ -6,9 +6,14 @@ use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 /// Keeps the last displayed image during a new probe, replacing it only with a definitive result.
 pub(crate) fn update(window: &PlayerWindow, snapshot: &resolibre_audio::session::Snapshot) {
-    window.set_cover_loading(snapshot.cover_pending);
-    if !snapshot.cover_pending {
-        show(window, snapshot.cover.as_deref());
+    if snapshot.display_next && snapshot.audible_next.is_some() {
+        window.set_cover_loading(snapshot.next_cover_pending);
+        show(window, snapshot.next_cover.as_deref());
+    } else {
+        window.set_cover_loading(snapshot.cover_pending);
+        if !snapshot.cover_pending {
+            show(window, snapshot.cover.as_deref());
+        }
     }
 }
 
@@ -91,5 +96,41 @@ mod tests {
         snapshot.cover_pending = false;
         update(&window, &snapshot);
         assert!(!window.get_has_cover() && !window.get_cover_loading());
+    }
+
+    /// Next focus displays the incoming artwork and never mislabels the outgoing cover.
+    #[test]
+    fn incoming_focus_uses_its_own_cover() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = PlayerWindow::new().unwrap();
+        let outgoing = Cover {
+            rgba: vec![255; COVER_SIDE as usize * COVER_SIDE as usize * 4].into(),
+        };
+        let incoming = Cover {
+            rgba: vec![40; COVER_SIDE as usize * COVER_SIDE as usize * 4].into(),
+        };
+        let mut snapshot = resolibre_audio::session::Snapshot {
+            cover: Some(std::sync::Arc::new(outgoing)),
+            next_cover_pending: true,
+            audible_next: Some(resolibre_audio::session::AudibleNext {
+                index: 1,
+                position: 2.0,
+                duration: 10.0,
+                gain: 0.3,
+                mix_region: None,
+                seekable: true,
+                stream_info: None,
+            }),
+            display_next: true,
+            ..Default::default()
+        };
+        update(&window, &snapshot);
+        assert!(!window.get_has_cover());
+        assert!(window.get_cover_loading());
+        snapshot.next_cover = Some(std::sync::Arc::new(incoming));
+        snapshot.next_cover_pending = false;
+        update(&window, &snapshot);
+        assert!(window.get_has_cover());
+        assert!(!window.get_cover_loading());
     }
 }
