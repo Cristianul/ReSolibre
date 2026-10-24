@@ -33,13 +33,15 @@ of lossless provenance. Artist/title are bounded descriptive fields, refreshed o
 reuse; they do not authorize a lookup. A bounded RIFF INFO fallback covers a
 Symphonia 0.6.1 WAV metadata-log omission.
 
-Every job re-reads the audio identity; timestamps alone are never an integrity proof.
+Analysis jobs rehash audio; timestamps are not an integrity proof. Historical
+inspection keeps all small facts and five recent plots. Evicted plots reload by
+a previously verified digest on a separate profile-scoped reader, without music
+I/O; missing/invalid rows fall back to analysis. This never authorizes playback.
+Forced refresh, removal and shutdown release facts; the queue caps entries at 1,024.
 The Linux adapter uses an independent cursor on the retained original descriptor,
 checks file identity before/after hashing and decoding, and revalidates before
-publication. Session generation checks remain authoritative. No database work or
-hashing runs on the UI, transport owner or audio callback. Default library/test
-sessions have no cache; desktop explicitly supplies a profile location. Future
-remote sources must supply a separately scoped storage/access adapter.
+publication. Session generation checks remain authoritative. No database work or hashing runs on UI, transport or audio threads. Desktop supplies the profile location; tests/default sessions have no cache.
+Remote sources need scoped storage/access adapters.
 
 Library badge restoration uses an additive `track_sources_v1` index (at most 4,096
 file-fact/audio-hash pairs). This is a presentation hint only: analysis/playback reuse
@@ -86,7 +88,8 @@ Deleting the dedicated analysis directory while closed also rebuilds the cache.
 - `crates/resolibre-core/src/analysis/`: serializable typed measurements.
 - `crates/resolibre-audio/src/analysis_cache.rs`: retained-file checks and redacted fallback.
 - `rhythm_analysis.rs`, `track_analysis.rs` in that crate: worker-only load/save.
-- `session/analysis.rs`, `session/rhythm.rs`: explicit profile configuration.
+- `session/analysis/reports.rs`: small facts, five plots and asynchronous historical reload.
+- `session/analysis.rs`, `session/rhythm.rs`: profile configuration.
 - `track_sources.rs` in storage and `analysis_cache/status.rs` in audio: startup badge hints/worker.
 - `apps/desktop/src/main.rs`: current-profile composition.
 
@@ -98,12 +101,10 @@ metadata/preferences preservation, harmless stale badge hints, future/corrupt sc
 links and permissions. Native jobs prove a retagged FLAC cache hit leaves decoded
 progress at zero and returns the same measurements; changed audio requires decoding.
 A real session restart restores automatic rhythm and the requested spectrogram.
-Regression checks also reopen the previous badge after MIX handover, preserve a
-marked cached report, and measure a generated 64 MiB input within the identity
-budget (`song_sized_audio_identity_fits_cache_deadline`, opt-in). An authorized
-real-file probe verifies A → B → A returns zero decoded seconds (0.67 s for a
-76 MB FLAC locally, versus the previous two-second identity timeout). Opening a saved
-result is labelled separately from actual PCM analysis.
+Regression checks cover MIX reopening, five-plot eviction with 10k small summaries,
+offline-source reload under 0.5 s, profile isolation, corrupt/oversized rows, stale
+completions and forced refresh. A maximum matrix reload measured 42 ms locally.
+Cold identity probes remain separate: 0.67 s for a 76 MB FLAC, zero decoded seconds.
 
 Run `cargo test --workspace`; opt-in container checks:
 `cargo test -p resolibre-storage real_formats_retag_without_reanalysis -- --ignored`.
@@ -125,9 +126,8 @@ Use the documented native environment for adapter checks/builds.
 
 ## Edge Cases
 
-Artist/title may be absent; labels are not a catalog or listening history. Cached
-technical measurements never replace current container facts such as codec or bit
-depth. Storage failure does not erase music or saved session intent. Cancellation
+Labels may be absent; this is not a catalog/history. Cached measurements never
+replace current codec or bit-depth facts. Storage failure does not erase music or saved session intent. Cancellation
 never stores partial analysis. Persistence is bounded, so evicted or unsupported
 inputs can be analyzed again. Windows/Android/iOS storage permissions, SQLite
 packaging and native decoder lifecycles remain unvalidated; portable Rust does not
@@ -136,7 +136,7 @@ establish a working application port.
 Dependencies: pinned [Symphonia](https://docs.rs/symphonia/0.6.1/) (MPL-2.0),
 [rusqlite](https://docs.rs/rusqlite/0.40.2/) with bundled SQLite (MIT/public domain),
 [SHA-2](https://docs.rs/sha2/0.11.1/) and Serde (MIT/Apache-2.0).
-`cargo audit` is unavailable in this environment; no full advisory audit is claimed.
+No full security audit is claimed.
 
 ## Related Docs
 

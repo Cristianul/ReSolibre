@@ -213,17 +213,11 @@ impl AnalysisHost {
         };
         window.set_running(matches!(status, AnalysisStatus::Running { .. }));
         match status {
-            AnalysisStatus::Running { decoded_seconds } => {
-                let progress = if *decoded_seconds == 0.0 {
-                    "Opening analysis…".to_string()
-                } else if let Some(duration) = self.source_duration.filter(|value| *value > 0.0) {
-                    format!(
-                        "Analyzing original audio… {:.0}% ({decoded_seconds:.1} s decoded)",
-                        (decoded_seconds / duration * 100.0).min(99.0)
-                    )
-                } else {
-                    format!("Analyzing original audio… {decoded_seconds:.1} s decoded")
-                };
+            AnalysisStatus::Running {
+                decoded_seconds,
+                phase,
+            } => {
+                let progress = analysis_progress(*phase, *decoded_seconds, self.source_duration);
                 window.set_status_text(progress.into());
                 if self.track_id.get().is_none()
                     && let resolibre_audio::session::RhythmStatus::Ready(report) = &snapshot.rhythm
@@ -288,6 +282,34 @@ impl AnalysisHost {
         {
             eprintln!("warn: cannot hide analysis window during shutdown");
         }
+    }
+}
+
+/// Reports actual stages; the decode percentage never masquerades as overall completion.
+fn analysis_progress(
+    phase: resolibre_audio::session::AnalysisPhase,
+    decoded_seconds: f64,
+    duration: Option<f64>,
+) -> String {
+    use resolibre_audio::session::AnalysisPhase;
+    match phase {
+        AnalysisPhase::Opening => "Opening analysis…".into(),
+        AnalysisPhase::LoadingSpectrogram => "Loading saved spectrogram…".into(),
+        AnalysisPhase::Decoding => {
+            if let Some(duration) = duration.filter(|value| *value > 0.0) {
+                format!(
+                    "Reading audio… {:.0}% · BPM and source checks follow",
+                    (decoded_seconds / duration * 100.0).clamp(0.0, 100.0)
+                )
+            } else {
+                format!("Reading audio… {decoded_seconds:.1} s decoded")
+            }
+        }
+        AnalysisPhase::ResolvingTempo => "Resolving BPM and beat positions…".into(),
+        AnalysisPhase::DetectingSource { completed, total } => {
+            format!("Checking lossy-source evidence… {completed}/{total} excerpts complete")
+        }
+        AnalysisPhase::Saving => "Saving analysis…".into(),
     }
 }
 

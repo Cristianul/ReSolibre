@@ -13,15 +13,82 @@ fn opening_saved_analysis_is_distinct_from_decoding() {
         source_duration: Some(16.0),
         ..Default::default()
     };
-    for (decoded_seconds, prefix) in [(0.0, "Opening analysis"), (1.0, "Analyzing original audio")]
-    {
+    for (phase, decoded_seconds, prefix) in [
+        (
+            resolibre_audio::session::AnalysisPhase::Opening,
+            0.0,
+            "Opening analysis",
+        ),
+        (
+            resolibre_audio::session::AnalysisPhase::LoadingSpectrogram,
+            0.0,
+            "Loading saved spectrogram",
+        ),
+        (
+            resolibre_audio::session::AnalysisPhase::Decoding,
+            1.0,
+            "Reading audio",
+        ),
+        (
+            resolibre_audio::session::AnalysisPhase::ResolvingTempo,
+            16.0,
+            "Resolving BPM",
+        ),
+        (
+            resolibre_audio::session::AnalysisPhase::DetectingSource {
+                completed: 2,
+                total: 6,
+            },
+            16.0,
+            "Checking lossy-source evidence… 2/6",
+        ),
+        (
+            resolibre_audio::session::AnalysisPhase::Saving,
+            16.0,
+            "Saving analysis",
+        ),
+    ] {
         host.refresh(&Snapshot {
             generation: 7,
-            analysis: AnalysisStatus::Running { decoded_seconds },
+            analysis: AnalysisStatus::Running {
+                decoded_seconds,
+                phase,
+            },
             ..Default::default()
         });
         assert!(window.get_status_text().starts_with(prefix));
     }
+}
+
+/// A maximum-size stored plot renders within the user's reopening budget without decoding audio.
+#[test]
+fn completed_plot_renders_within_half_a_second() {
+    i_slint_backend_testing::init_no_event_loop();
+    let mut report = (*report()).clone();
+    report.columns = resolibre_core::analysis::MAX_COLUMNS;
+    report.power_db = vec![-30.0; report.columns * resolibre_core::analysis::ROWS];
+    report.seconds_per_column = report.duration_seconds / report.columns as f64;
+    let snapshot = Snapshot {
+        generation: 7,
+        analysis: AnalysisStatus::Complete(Arc::new(report)),
+        ..Default::default()
+    };
+    let window = AnalysisWindow::new().unwrap();
+    window.show().unwrap();
+    let mut host = AnalysisHost {
+        window: Some(window.clone_strong()),
+        generation: Rc::new(Cell::new(Some(7))),
+        ..Default::default()
+    };
+    let started = std::time::Instant::now();
+    host.refresh(&snapshot);
+    assert!(window.get_ready());
+    assert_eq!(window.get_plot().size().width, 512);
+    assert!(started.elapsed() < std::time::Duration::from_millis(500));
+    eprintln!(
+        "completed plot rendered in {:.3} s",
+        started.elapsed().as_secs_f64()
+    );
 }
 
 /// The tempo lane shares exact source bounds with the plot and exposes unknown gaps and accessible selection.
@@ -190,6 +257,7 @@ fn result_view_retains_inspected_snapshot() {
             AnalysisStatus::Unavailable,
             AnalysisStatus::Running {
                 decoded_seconds: 4.0,
+                phase: resolibre_audio::session::AnalysisPhase::Decoding,
             },
             AnalysisStatus::Complete(report()),
         ] {
@@ -237,6 +305,7 @@ fn result_view_waits_for_requested_revision_and_rejects_other_tracks() {
     snapshot.revision = 9;
     snapshot.analysis = AnalysisStatus::Running {
         decoded_seconds: 2.0,
+        phase: resolibre_audio::session::AnalysisPhase::Decoding,
     };
     host.refresh(&snapshot);
     assert!(window.get_running());

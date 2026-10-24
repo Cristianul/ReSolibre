@@ -50,7 +50,7 @@ facts reuse a bounded content-identity index; older caches and changed/new files
 hashed once without decoding. Every lookup rechecks read access and regular-file facts.
 Rhythm-only, missing, changed-audio, corrupt and evicted results remain unmarked.
 Fresh session attempts take precedence over late restoration; removed IDs are ignored.
-Only small status observations reach the session, never a library of retained plots.
+Only badge observations reach the session from this restoration worker.
 
 One scheduler owns full analysis, with only one decoder active. Background batches
 yield between files to automatic current/next rhythm preparation. Playback navigation
@@ -67,8 +67,11 @@ foreground priority. Transport stays independent. Stop cancels pending
 analysis; closing the diagnostics window cancels only its own explicit request.
 Batch work continues if Library is hidden. Shutdown cancels and reaps owned workers.
 
-Only current playback and the explicitly inspected plot remain in memory, sharing
-one report when they match. Other rows retain small statuses; reports use the bounded cache. Off-track files
+All completed/opened reports retain small facts; only five recent plots stay cached.
+Active playback/views can also pin a shared report. Known evicted plots reload on a
+separate reader without music I/O or decoder-queue waits. Analyze and playback still
+revalidate originals; missing saved plots use normal analysis. Removed IDs are pruned.
+Off-track files
 open read-only/nonblocking inside the job, require regular-file identity, and use
 the default native audio stream. The playing track uses its retained selected stream.
 Existing decode limits, input revalidation and redacted diagnostics still apply.
@@ -76,7 +79,7 @@ Unknown/stale IDs cannot authorize arbitrary paths. Music files are never change
 
 ## Key Files
 
-- `crates/resolibre-audio/src/session/analysis.rs`: queue, cancellation and observations.
+- `crates/resolibre-audio/src/session/analysis{.rs,/reports.rs}`: scheduling, small facts and five-plot cache.
 - `crates/resolibre-audio/src/session/worker.rs`: typed actions and rhythm scheduling.
 - `crates/resolibre-audio/src/track_analysis.rs`: retained/default source and forced pass.
 - `crates/resolibre-storage/src/lib.rs`: atomic report replacement.
@@ -112,7 +115,7 @@ Stop/inspection regressions cover idle analysis, independent library results, re
 identity and removed IDs. Production UI wiring and pointer tests verify stopped
 artwork access, badge clicks with duplicate titles/filtered rows, and unchanged
 selection, playback and source bytes. Repeated inspection keeps forced retries fresh. A MIX-handover regression checks
-that reopening the previous badge reads its saved report without decoding again.
+that the previous badge shares its completed snapshot within 0.5 s.
 
 Badge verification (2026-10-23): targeted regressions, storage tests, Clippy and three
 native Library previews (X11 1x/2x, Wayland) passed. The full workspace run still fails

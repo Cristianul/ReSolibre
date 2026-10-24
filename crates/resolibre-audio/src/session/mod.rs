@@ -2,7 +2,7 @@
 
 mod analysis;
 mod rhythm;
-pub use analysis::{AnalysisInspection, AnalysisStatus, LibraryAnalysisStatus};
+pub use analysis::{AnalysisInspection, AnalysisPhase, AnalysisStatus, LibraryAnalysisStatus};
 pub use rhythm::{PreparedRhythm, RhythmStatus};
 
 mod edges;

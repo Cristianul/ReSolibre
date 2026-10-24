@@ -1,6 +1,9 @@
 //! Bounded full-analysis scheduling; stable queue IDs isolate library work from playback navigation.
 
+mod reports;
+
 use super::Snapshot;
+pub use crate::track_analysis::AnalysisPhase;
 use crate::{
     LocalPlayer,
     original_audio::SourceKey,
@@ -15,6 +18,7 @@ pub enum AnalysisStatus {
     Idle,
     Running {
         decoded_seconds: f64,
+        phase: AnalysisPhase,
     },
     Complete(Arc<resolibre_core::analysis::TrackAnalysis>),
     Cancelled,
@@ -57,6 +61,7 @@ pub(super) struct AnalysisRuntime {
     active: Option<Active>,
     pending: VecDeque<Request>,
     completed: Option<u64>,
+    reports: reports::Reports,
     queue_revision: Option<u64>,
     cache_status: Option<crate::analysis_cache::status::StatusJob>,
     cache_checked: std::collections::HashSet<u64>,
@@ -232,6 +237,7 @@ impl AnalysisRuntime {
 
     /// Stop and explicit batch cancellation remove pending work without waiting for the decoder.
     pub(super) fn cancel(&mut self, snapshot: &mut Snapshot) {
+        self.reports.cancel_view();
         if let Some(active) = &mut self.active {
             active.job.cancel();
             active.cancelled = true;
@@ -251,6 +257,7 @@ impl AnalysisRuntime {
 
     /// Closing the diagnostics view cancels only its explicit request, leaving a library batch running.
     pub(super) fn cancel_view(&mut self, snapshot: &mut Snapshot) {
+        self.reports.cancel_view();
         self.pending.retain(|request| {
             if request.foreground {
                 Arc::make_mut(&mut snapshot.library_analysis).remove(&request.id);
@@ -289,6 +296,7 @@ impl AnalysisRuntime {
         self.enqueue(id, true, force, snapshot);
         snapshot.analysis = AnalysisStatus::Running {
             decoded_seconds: 0.0,
+            phase: AnalysisPhase::Opening,
         };
     }
 
@@ -317,15 +325,30 @@ impl AnalysisRuntime {
         if !same_target {
             self.cancel_view(snapshot);
         }
-        let status = if !force
+        let retained = if force {
+            None
+        } else {
+            self.retained_report(id)
+        };
+        let status = if let Some(report) = retained {
+            AnalysisStatus::Complete(report)
+        } else if !force
             && queue.current_id() == Some(id)
             && matches!(snapshot.analysis, AnalysisStatus::Complete(_))
         {
             snapshot.analysis.clone()
         } else {
-            self.enqueue(id, true, force, snapshot);
+            let loading_plot = !force && self.reports.request(id);
+            if !loading_plot {
+                self.enqueue(id, true, force, snapshot);
+            }
             AnalysisStatus::Running {
                 decoded_seconds: 0.0,
+                phase: if loading_plot {
+                    AnalysisPhase::LoadingSpectrogram
+                } else {
+                    AnalysisPhase::Opening
+                },
             }
         };
         snapshot.inspection = Some(AnalysisInspection { id, status });
@@ -352,6 +375,9 @@ impl AnalysisRuntime {
 
     /// Coalesces repeated clicks; stable IDs bound pending work to the library's maximum size.
     fn enqueue(&mut self, id: u64, foreground: bool, force: bool, snapshot: &mut Snapshot) {
+        if force {
+            self.reports.remove(id);
+        }
         self.requested.insert(id);
         let mut force = force;
         if let Some(active) = &mut self.active
@@ -397,6 +423,13 @@ impl AnalysisRuntime {
     ) {
         self.reconcile_queue(queue, snapshot);
         self.restore_cached(queue, snapshot);
+        if let Some((id, report)) = self.reports.poll(self.persistent.as_ref()) {
+            if let Some(report) = report {
+                update_inspection(snapshot, id, AnalysisStatus::Complete(report));
+            } else {
+                self.enqueue(id, true, false, snapshot);
+            }
+        }
         let was_active = self.active.is_some();
         self.poll(snapshot);
         // Leave one scheduling turn between files for current/next rhythm and playback changes.
@@ -417,6 +450,7 @@ impl AnalysisRuntime {
             queue.entries().iter().map(|entry| entry.id).collect();
         self.pending.retain(|request| ids.contains(&request.id));
         self.cache_checked.retain(|id| ids.contains(id));
+        self.reports.retain(&ids);
         self.requested.retain(|id| ids.contains(id));
         if snapshot.library_analysis.keys().any(|id| !ids.contains(id)) {
             Arc::make_mut(&mut snapshot.library_analysis).retain(|id, _| ids.contains(id));
@@ -472,7 +506,22 @@ impl AnalysisRuntime {
         }
     }
 
-    /// Publishes plots only for current playback and explicit inspection; other rows retain small statuses.
+    /// Keeps all small measurements, with only five recently used full plots in memory.
+    fn remember_report(
+        &mut self,
+        id: u64,
+        report: Arc<resolibre_core::analysis::TrackAnalysis>,
+        digest: Option<[u8; 32]>,
+    ) {
+        self.reports.remember(id, report, digest);
+    }
+
+    /// Shares a recent full plot without disk I/O or waiting for analysis work.
+    fn retained_report(&mut self, id: u64) -> Option<Arc<resolibre_core::analysis::TrackAnalysis>> {
+        self.reports.plot(id)
+    }
+
+    /// Publishes completed reports and retains every Library occurrence for immediate inspection.
     fn poll(&mut self, snapshot: &mut Snapshot) {
         let Some(active) = &mut self.active else {
             return;
@@ -482,6 +531,7 @@ impl AnalysisRuntime {
             if !active.cancelled {
                 let status = AnalysisStatus::Running {
                     decoded_seconds: active.job.progress(),
+                    phase: active.job.phase(),
                 };
                 if current {
                     snapshot.analysis = status.clone();
@@ -500,7 +550,9 @@ impl AnalysisRuntime {
             Ok(report) => {
                 self.completed = Some(active.request.id);
                 mark(snapshot, active.request.id, LibraryAnalysisStatus::Complete);
-                let status = AnalysisStatus::Complete(Arc::new(report));
+                let report = Arc::new(report);
+                self.remember_report(active.request.id, Arc::clone(&report), active.job.digest());
+                let status = AnalysisStatus::Complete(report);
                 if current {
                     snapshot.analysis = status.clone();
                 }

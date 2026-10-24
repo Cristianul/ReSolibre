@@ -2384,6 +2384,9 @@ fn previous_track_badge_reuses_saved_report_after_mix_handover() {
                 .all(|status| *status == LibraryAnalysisStatus::Complete)
     });
     let previous_id = ready.tracks[0].id;
+    let AnalysisStatus::Complete(expected) = &ready.analysis else {
+        panic!("outgoing track must finish its analysis before handover");
+    };
     let identity = resolibre_storage::audio_identity::identify(
         fs::File::open(&first.path).unwrap(),
         &std::sync::atomic::AtomicBool::new(false),
@@ -2391,7 +2394,7 @@ fn previous_track_badge_reuses_saved_report_after_mix_handover() {
     .unwrap();
     let mut database = resolibre_storage::AnalysisCache::open(&directory).unwrap();
     let mut saved = database.track(&identity).unwrap().unwrap();
-    // An identifiable cached measurement proves reuse even when a new decode would look plausible.
+    // Change the disk result: reopening must use the exact in-session report, without disk work.
     saved.power_db.fill(-37.0);
     database.save_track(&identity, &saved).unwrap();
     drop(database);
@@ -2410,6 +2413,7 @@ fn previous_track_badge_reuses_saved_report_after_mix_handover() {
         assert!(Instant::now() < deadline, "mix handover deadline");
         std::thread::sleep(Duration::from_millis(10));
     }
+    let opened = Instant::now();
     let revision = session
         .submit(Command::InspectTrack {
             id: previous_id,
@@ -2424,14 +2428,78 @@ fn previous_track_badge_reuses_saved_report_after_mix_handover() {
     let AnalysisStatus::Complete(report) = &inspected.inspection.as_ref().unwrap().status else {
         panic!("completed inspection required");
     };
-    assert_eq!(
-        report.power_db, saved.power_db,
-        "badge click must reuse the previous track's full report"
+    assert!(
+        std::sync::Arc::ptr_eq(report, expected),
+        "inspection must share the completed snapshot"
+    );
+    assert!(opened.elapsed() < Duration::from_millis(500));
+    eprintln!(
+        "previous MIX report opened in {:.3} s",
+        opened.elapsed().as_secs_f64()
     );
     assert_eq!(
         inspected.current,
         Some(1),
         "inspection must preserve current playback"
+    );
+    close(session);
+}
+
+/// Evicted matrices reopen from disk without touching music or entering the full-analysis queue.
+#[test]
+fn evicted_spectrogram_reopens_even_while_original_is_offline() {
+    use resolibre_audio::session::{AnalysisStatus, LibraryAnalysisStatus};
+    let fixtures: Vec<_> = (1..=7).map(Fixture::new).collect();
+    let session = Session::start_with_analysis_cache(
+        AudioOutput::Silent,
+        Some(fixtures[0].directory.join("cache")),
+    )
+    .unwrap();
+    let revision = session
+        .submit(Command::Add(
+            fixtures.iter().map(|item| item.path.clone()).collect(),
+        ))
+        .unwrap();
+    wait(&session, revision, |snapshot| snapshot.tracks.len() == 7);
+    let revision = session.submit(Command::AnalyzeAll).unwrap();
+    let ready = wait(&session, revision, |snapshot| {
+        snapshot.analysis_pending == 0
+            && snapshot.library_analysis.len() == 7
+            && snapshot
+                .library_analysis
+                .values()
+                .all(|status| *status == LibraryAnalysisStatus::Complete)
+    });
+    let id = ready.tracks[0].id;
+    let offline = fixtures[0].directory.join("offline.wav");
+    fs::rename(&fixtures[0].path, &offline).unwrap();
+    let started = Instant::now();
+    let revision = session
+        .submit(Command::InspectTrack { id, force: false })
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_millis(500);
+    let opened = loop {
+        let snapshot = session.snapshot();
+        if snapshot.revision >= revision
+            && snapshot.inspection.as_ref().is_some_and(|view| {
+                view.id == id && matches!(view.status, AnalysisStatus::Complete(_))
+            })
+        {
+            break Some(snapshot);
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    fs::rename(&offline, &fixtures[0].path).unwrap();
+    let opened = opened
+        .expect("historical inspection must finish without rehashing or decoding offline audio");
+    assert_eq!(opened.analysis_pending, 0);
+    assert_eq!(opened.current, None);
+    eprintln!(
+        "session evicted plot reopened in {:.3} s",
+        started.elapsed().as_secs_f64()
     );
     close(session);
 }

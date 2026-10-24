@@ -7,7 +7,7 @@ use resolibre_core::analysis::{TrackAnalysis, TrackAnalyzer};
 use std::fs::File;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -15,15 +15,30 @@ use std::time::Duration;
 const DEADLINE: Duration = Duration::from_secs(300);
 const UNAVAILABLE: &str = "Track analysis unavailable or resource limit reached";
 
+/// Actual worker stages; decoding completion is not overall analysis completion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnalysisPhase {
+    Opening,
+    LoadingSpectrogram,
+    Decoding,
+    ResolvingTempo,
+    DetectingSource { completed: usize, total: usize },
+    Saving,
+}
+
 pub(crate) enum TrackInput {
     Retained(File, SourceKey),
     Path(std::path::PathBuf),
 }
 
+type CompletedTrack = (TrackAnalysis, Option<[u8; 32]>);
+
 pub(crate) struct TrackJob {
     cancel: Arc<AtomicBool>,
     progress: Arc<AtomicU64>,
-    thread: Option<JoinHandle<Result<TrackAnalysis, &'static str>>>,
+    phase: Arc<AtomicUsize>,
+    digest: Option<[u8; 32]>,
+    thread: Option<JoinHandle<Result<CompletedTrack, &'static str>>>,
 }
 
 impl TrackJob {
@@ -44,6 +59,8 @@ impl TrackJob {
     ) -> Result<Self, &'static str> {
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = Arc::new(AtomicU64::new(0));
+        let phase = Arc::new(AtomicUsize::new(0));
+        let worker_phase = Arc::clone(&phase);
         let worker_cancel = Arc::clone(&cancel);
         let worker_progress = Arc::clone(&progress);
         let thread = thread::Builder::new()
@@ -79,7 +96,7 @@ impl TrackJob {
                     match cached.database.track(&cached.identity) {
                         Ok(Some(report)) => {
                             if crate::analysis_cache::unchanged(&file, key, &worker_cancel) {
-                                return Ok(report);
+                                return Ok((report, Some(cached.identity.digest)));
                             }
                             return Err(UNAVAILABLE);
                         }
@@ -94,6 +111,7 @@ impl TrackJob {
                 if !crate::analysis_cache::unchanged(&file, key, &worker_cancel) {
                     return Err(UNAVAILABLE);
                 }
+                worker_phase.store(1, Ordering::Relaxed);
                 let mut analyzer = None;
                 original_audio::native::decode(
                     file,
@@ -139,6 +157,7 @@ impl TrackJob {
                 if worker_cancel.load(Ordering::Relaxed) {
                     return Err(UNAVAILABLE);
                 }
+                worker_phase.store(2, Ordering::Relaxed);
                 let mut report = analyzer
                     .ok_or(UNAVAILABLE)?
                     .finish()
@@ -146,13 +165,14 @@ impl TrackJob {
                 if !crate::analysis_cache::unchanged(&retained, key, &worker_cancel) {
                     return Err(UNAVAILABLE);
                 }
-                report.provenance = provenance::analyze(&retained, key, &report, &worker_cancel);
+                report.provenance = provenance::analyze(&retained, key, &report, &worker_cancel, &worker_phase);
                 if !crate::analysis_cache::unchanged(&retained, key, &worker_cancel) {
                     return Err(UNAVAILABLE);
                 }
                 if report.provenance == resolibre_core::analysis::provenance::ProvenanceReport::Unavailable {
                     eprintln!("warn: lossy-source detection unavailable; retaining spectral and tempo analysis");
                 }
+                worker_phase.store(3, Ordering::Relaxed);
                 if let Some(cached) = &mut cached
                     && cached
                         .database
@@ -165,14 +185,22 @@ impl TrackJob {
                 if !crate::analysis_cache::unchanged(&retained, key, &worker_cancel) {
                     return Err(UNAVAILABLE);
                 }
-                Ok(report)
+                let digest = cached.as_ref().map(|cached| cached.identity.digest);
+                Ok((report, digest))
             })
             .map_err(|_| UNAVAILABLE)?;
         Ok(Self {
             cancel,
             progress,
+            phase,
+            digest: None,
             thread: Some(thread),
         })
+    }
+
+    /// Returns only a completed worker's validated original-audio key for historical report inspection.
+    pub(crate) fn digest(&self) -> Option<[u8; 32]> {
+        self.digest
     }
 
     /// Signals cancellation without joining on the playback/control thread.
@@ -185,12 +213,30 @@ impl TrackJob {
         self.progress.load(Ordering::Relaxed) as f64 / 1000.0
     }
 
+    /// Reads one atomic stage/counter snapshot, avoiding inconsistent excerpt totals during polling.
+    pub(crate) fn phase(&self) -> AnalysisPhase {
+        match self.phase.load(Ordering::Relaxed) {
+            0 => AnalysisPhase::Opening,
+            1 => AnalysisPhase::Decoding,
+            2 => AnalysisPhase::ResolvingTempo,
+            3 => AnalysisPhase::Saving,
+            value => AnalysisPhase::DetectingSource {
+                completed: (value >> 8) & 0xff,
+                total: value & 0xff,
+            },
+        }
+    }
+
     /// Joins only an already-finished worker; cancellation/replacement remains responsive.
     pub(crate) fn poll(&mut self) -> Option<Result<TrackAnalysis, &'static str>> {
         if !self.thread.as_ref()?.is_finished() {
             return None;
         }
-        Some(self.thread.take()?.join().unwrap_or(Err(UNAVAILABLE)))
+        let result = self.thread.take()?.join().unwrap_or(Err(UNAVAILABLE));
+        Some(result.map(|(report, digest)| {
+            self.digest = digest;
+            report
+        }))
     }
 }
 

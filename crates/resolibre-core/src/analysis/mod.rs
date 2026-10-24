@@ -31,6 +31,35 @@ pub struct TrackAnalysis {
     pub provenance: provenance::ProvenanceReport,
 }
 
+/// Small completed measurements retained independently of the large spectrogram matrix.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TrackAnalysisSummary {
+    pub sample_rate_hz: u32,
+    pub channels: usize,
+    pub duration_seconds: f64,
+    pub columns: usize,
+    pub seconds_per_column: f64,
+    pub sustained_bandwidth_hz: Option<f64>,
+    pub tempo: TempoReport,
+    pub provenance: provenance::ProvenanceReport,
+}
+
+impl From<&TrackAnalysis> for TrackAnalysisSummary {
+    /// Copies measurements and observed beats without copying or retaining any spectral bins.
+    fn from(report: &TrackAnalysis) -> Self {
+        Self {
+            sample_rate_hz: report.sample_rate_hz,
+            channels: report.channels,
+            duration_seconds: report.duration_seconds,
+            columns: report.columns,
+            seconds_per_column: report.seconds_per_column,
+            sustained_bandwidth_hz: report.sustained_bandwidth_hz,
+            tempo: report.tempo.clone(),
+            provenance: report.provenance,
+        }
+    }
+}
+
 pub struct TrackAnalyzer {
     rate: u32,
     channels: usize,

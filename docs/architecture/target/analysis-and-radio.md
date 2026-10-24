@@ -75,12 +75,11 @@ Approved: persist results by audio hash, excluding tags/artwork; store artist/ti
 separately. The local [cache](../features/analysis-cache.md) uses SHA-256 and SQLite.
 Future adapters must preserve source isolation and input revalidation.
 Approved: [Library analysis](../features/library-analysis.md) adds batch/row actions,
-forced replacement and success/failure badges.
+forced replacement and success/failure badges. Keep small measurements and five plots in RAM; reload historical plots from disk. Playback and fresh analyses revalidate.
 
-Store source/profile-scoped input identity, change information, job status and
-results in application storage. Cache hits require unchanged relevant input;
-revalidate before publishing a result and reject stale completions. Interrupted
-jobs remain retryable. Bound retention and provide clearing/rebuild behavior.
+Persist source/profile-scoped identity, changes, job status and results. Revalidate
+cache hits and reject stale completions. Allow interrupted-job retries, bounded
+retention and clearing/rebuild.
 
 No per-algorithm versioning now. When changing analysis,
 explicitly invalidate/rebuild affected incompatible results in the application

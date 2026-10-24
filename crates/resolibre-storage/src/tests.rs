@@ -68,6 +68,38 @@ fn track() -> TrackAnalysis {
     analyzer.finish().unwrap()
 }
 
+/// Historical display reads preserve labels, enforce payload validity and remain isolated by profile.
+#[test]
+fn snapshot_read_is_bounded_validated_and_preserves_labels() {
+    let fixture = Fixture::new();
+    let mut cache = fixture.cache();
+    let key = identity();
+    cache.save_track(&key, &track()).unwrap();
+    assert!(cache.track_snapshot(&key.digest).unwrap().is_some());
+    let labels: (String, String) = cache
+        .connection
+        .query_row("SELECT artist,title FROM analyses", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .unwrap();
+    assert_eq!(labels, (key.artist, key.title));
+    assert!(cache.track_snapshot(&[1; 32]).unwrap().is_none());
+    assert!(
+        Fixture::new()
+            .cache()
+            .track_snapshot(&key.digest)
+            .unwrap()
+            .is_none()
+    );
+    for payload in [b"{}".to_vec(), vec![0; MAX_RESULT_BYTES + 1]] {
+        cache
+            .connection
+            .execute("UPDATE analyses SET payload=?1", [payload])
+            .unwrap();
+        assert!(cache.track_snapshot(&key.digest).unwrap().is_none());
+    }
+}
+
 /// Restart, retag, inconclusive results and coverage upgrades all share the same content authority.
 #[test]
 fn restart_reuses_results_and_keeps_labels_out_of_identity() {

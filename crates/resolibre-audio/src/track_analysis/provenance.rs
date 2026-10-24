@@ -5,7 +5,7 @@ use lossprint::Scanner;
 use resolibre_core::analysis::{TrackAnalysis, provenance::ProvenanceReport};
 use std::fs::File;
 use std::io::{Seek, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 const DEADLINE: Duration = Duration::from_secs(90);
@@ -17,6 +17,7 @@ pub(super) fn analyze(
     key: SourceKey,
     report: &TrackAnalysis,
     cancel: &AtomicBool,
+    phase: &AtomicUsize,
 ) -> ProvenanceReport {
     if !resolibre_core::analysis::provenance::supports_format(
         report.sample_rate_hz,
@@ -35,6 +36,7 @@ pub(super) fn analyze(
         report.channels,
         report.duration_seconds,
     );
+    publish_progress(phase, 0, detector.plan.len());
     let result =
         original_audio::native::decode_prefix(input, key, cancel, DEADLINE, |reader, started| {
             let limit = detector
@@ -53,7 +55,9 @@ pub(super) fn analyze(
                     if (rate, channels) != (detector.rate, detector.channels) {
                         return Err(());
                     }
-                    detector.push(samples, cancel)
+                    detector.push(samples, cancel)?;
+                    publish_progress(phase, detector.next, detector.plan.len());
+                    Ok(())
                 },
             )?;
             Ok(())
@@ -62,6 +66,11 @@ pub(super) fn analyze(
         return ProvenanceReport::Unavailable;
     }
     detector.finish()
+}
+
+/// Packs the bounded completed/total excerpt counts with a detector-stage flag in one atomic value.
+fn publish_progress(phase: &AtomicUsize, completed: usize, total: usize) {
+    phase.store(0x10000 | (completed << 8) | total, Ordering::Relaxed);
 }
 
 struct Excerpts {

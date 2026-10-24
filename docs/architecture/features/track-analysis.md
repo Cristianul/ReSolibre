@@ -2,7 +2,7 @@
 
 ## Read When
 
-Changing diagnostics, BPM, beats, jobs or their window. Use `track-analysis`.
+Changing diagnostics, BPM, beats, jobs or UI. Use `track-analysis`.
 
 ## Do Not Read For
 
@@ -86,10 +86,11 @@ Source identity is revalidated before publication. TRIM/FADE retains its
 FFmpeg adapter; both reuse the validated PCM reader/source identity. FFmpeg inputs
 are reopened through retained descriptors for independent cursors on retries.
 
-PCM streams through fixed buffers, never a whole-file allocation. A five-minute
-wall deadline bounds work; per-block pacing targets roughly one-quarter of a core
-for the Rust consumer, without claiming a total process CPU cap. Cancellation is
-signalled immediately and the session polls cleanup; shutdown reaps owned work.
+Progress: saved-plot loading, audio reading (%), BPM resolution, source detection
+(completed/total excerpts) and saving; decode completion is not overall completion.
+PCM uses fixed buffers. A five-minute deadline bounds work; per-block pacing targets
+one-quarter core for Rust, not the whole process. Cancellation signals immediately;
+the session polls cleanup and shutdown reaps work.
 No source writes. Explicit [Library batches](library-analysis.md) share this scheduler;
 [storage](analysis-cache.md) runs in these jobs.
 

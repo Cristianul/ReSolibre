@@ -34,7 +34,16 @@ fn measure_authorized_recording() {
         }
     }
     let mut job = TrackJob::start(file, key, None).unwrap();
+    let mut last_phase = None;
     loop {
+        let phase = job.phase();
+        if last_phase != Some(phase) {
+            println!(
+                "analysis stage={phase:?} elapsed={:.3}s",
+                started.elapsed().as_secs_f64()
+            );
+            last_phase = Some(phase);
+        }
         if let Some(result) = job.poll() {
             let report = result.unwrap();
             println!(

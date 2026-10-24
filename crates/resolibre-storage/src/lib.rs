@@ -142,6 +142,33 @@ impl AnalysisCache {
         Ok(report)
     }
 
+    /// Reloads a previously identified historical report for display, without retagging or reading music.
+    /// The caller must scope the digest to its profile; this does not validate current source contents.
+    pub fn track_snapshot(&self, digest: &[u8; 32]) -> Result<Option<TrackAnalysis>, CacheError> {
+        let bytes: Option<Vec<u8>> = self
+            .connection
+            .query_row(
+                "SELECT payload FROM analyses WHERE hash=?1 AND kind=2 AND length(payload)<=?2",
+                params![digest.as_slice(), MAX_RESULT_BYTES as i64],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| CacheError)?;
+        let Some(bytes) = bytes else {
+            return Ok(None);
+        };
+        let report = serde_json::from_slice::<TrackAnalysis>(&bytes)
+            .ok()
+            .filter(validation::track);
+        if report.is_some() {
+            self.connection.execute(
+                "UPDATE analyses SET accessed=unixepoch('subsec')*1000 WHERE hash=?1 AND kind=2",
+                [digest.as_slice()],
+            ).map_err(|_| CacheError)?;
+        }
+        Ok(report)
+    }
+
     /// Stores inconclusive results too, while preserving prefix/whole coverage as distinct facts.
     pub fn save_rhythm(
         &mut self,
