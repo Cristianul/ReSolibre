@@ -53,10 +53,129 @@ fn opening_saved_analysis_is_distinct_from_decoding() {
             analysis: AnalysisStatus::Running {
                 decoded_seconds,
                 phase,
+                preview: None,
             },
             ..Default::default()
         });
         assert!(window.get_status_text().starts_with(prefix));
+    }
+}
+
+/// The completed plot appears during source inference and the final verdict preserves its image/selection.
+#[test]
+fn plot_preview_is_visible_before_source_verdict_and_updates_in_place() {
+    use resolibre_audio::session::AnalysisPhase;
+    use resolibre_core::analysis::provenance::ProvenanceReport;
+    i_slint_backend_testing::init_no_event_loop();
+    let window = AnalysisWindow::new().unwrap();
+    window.show().unwrap();
+    let mut initial = (*report()).clone();
+    initial.sample_rate_hz = 44100;
+    let preview = Arc::new(initial);
+    let mut host = AnalysisHost {
+        window: Some(window.clone_strong()),
+        generation: Rc::new(Cell::new(Some(7))),
+        ..Default::default()
+    };
+    let mut snapshot = Snapshot {
+        generation: 7,
+        analysis: AnalysisStatus::Running {
+            decoded_seconds: 16.0,
+            phase: AnalysisPhase::DetectingSource {
+                completed: 1,
+                total: 6,
+            },
+            preview: Some(Arc::clone(&preview)),
+        },
+        ..Default::default()
+    };
+    host.refresh(&snapshot);
+    assert!(window.get_ready() && window.get_running());
+    assert!(!host.completed);
+    assert!(window.get_tempo_text().contains("120.0 BPM"));
+    assert!(window.get_provenance_text().contains("1/6"));
+    assert!(!window.get_provenance_text().contains("unavailable"));
+    let image = window.get_plot();
+    let zones = window.get_tempo_zones();
+    crate::ui_tests::click(&window, &zones.row_data(0).unwrap().details);
+    let selection = window.get_tempo_detail();
+    if let AnalysisStatus::Running { phase, .. } = &mut snapshot.analysis {
+        *phase = AnalysisPhase::DetectingSource {
+            completed: 3,
+            total: 6,
+        };
+    }
+    host.refresh(&snapshot);
+    assert!(window.get_provenance_text().contains("3/6"));
+    assert_eq!(window.get_plot(), image);
+    assert_eq!(window.get_tempo_zones(), zones);
+    let mut finished = (*preview).clone();
+    finished.provenance = ProvenanceReport::Measured {
+        lossy_score: 0.02,
+        minimum_score: 0.01,
+        maximum_score: 0.03,
+        windows: 6,
+    };
+    snapshot.analysis = AnalysisStatus::Complete(Arc::new(finished));
+    host.refresh(&snapshot);
+    assert!(window.get_ready() && !window.get_running());
+    assert!(
+        window
+            .get_provenance_text()
+            .contains("No lossy traces detected")
+    );
+    assert_eq!(window.get_plot(), image);
+    assert_eq!(window.get_tempo_zones(), zones);
+    assert_eq!(window.get_tempo_detail(), selection);
+}
+
+/// Cancellation can retain a validated view, but source failure and another generation cannot provide a verdict.
+#[test]
+fn pending_source_verdict_respects_cancellation_failure_and_generation() {
+    use resolibre_audio::session::AnalysisPhase;
+    i_slint_backend_testing::init_no_event_loop();
+    for cancelled in [false, true] {
+        let window = AnalysisWindow::new().unwrap();
+        window.show().unwrap();
+        let mut host = AnalysisHost {
+            window: Some(window.clone_strong()),
+            generation: Rc::new(Cell::new(Some(7))),
+            ..Default::default()
+        };
+        let mut snapshot = Snapshot {
+            generation: 7,
+            analysis: AnalysisStatus::Running {
+                decoded_seconds: 16.0,
+                phase: AnalysisPhase::DetectingSource {
+                    completed: 0,
+                    total: 6,
+                },
+                preview: Some(report()),
+            },
+            ..Default::default()
+        };
+        host.refresh(&snapshot);
+        snapshot.generation = 8;
+        snapshot.analysis = AnalysisStatus::Complete(variable_report());
+        host.refresh(&snapshot);
+        assert!(
+            !host.completed,
+            "a different track must not finish this view"
+        );
+        assert!(window.get_status_text().contains("Playback changed"));
+        snapshot.generation = 7;
+        snapshot.analysis = if cancelled {
+            AnalysisStatus::Cancelled
+        } else {
+            AnalysisStatus::Unavailable
+        };
+        host.refresh(&snapshot);
+        assert_eq!(window.get_ready(), cancelled);
+        assert!(!window.get_running());
+        assert_eq!(host.rendered.is_some(), cancelled);
+        if cancelled {
+            assert!(window.get_provenance_text().contains("cancelled"));
+        }
     }
 }
 
@@ -258,6 +377,7 @@ fn result_view_retains_inspected_snapshot() {
             AnalysisStatus::Running {
                 decoded_seconds: 4.0,
                 phase: resolibre_audio::session::AnalysisPhase::Decoding,
+                preview: None,
             },
             AnalysisStatus::Complete(report()),
         ] {
@@ -306,6 +426,7 @@ fn result_view_waits_for_requested_revision_and_rejects_other_tracks() {
     snapshot.analysis = AnalysisStatus::Running {
         decoded_seconds: 2.0,
         phase: resolibre_audio::session::AnalysisPhase::Decoding,
+        preview: None,
     };
     host.refresh(&snapshot);
     assert!(window.get_running());

@@ -2445,6 +2445,73 @@ fn previous_track_badge_reuses_saved_report_after_mix_handover() {
     close(session);
 }
 
+/// An inspected full-track plot reaches the session while provenance is pending and the badge is still running.
+#[test]
+fn inspection_receives_plot_before_source_detection_completes() {
+    use resolibre_audio::session::{AnalysisStatus, LibraryAnalysisStatus};
+    let mut fixture = Fixture::new(180);
+    fixture.bytes[24..28].copy_from_slice(&44100_u32.to_le_bytes());
+    fixture.bytes[28..32].copy_from_slice(&88200_u32.to_le_bytes());
+    for (index, sample) in fixture.bytes[44..]
+        .as_chunks_mut::<2>()
+        .0
+        .iter_mut()
+        .enumerate()
+    {
+        let value =
+            ((std::f64::consts::TAU * 1000.0 * index as f64 / 44100.0).sin() * 12000.0) as i16;
+        sample.copy_from_slice(&value.to_le_bytes());
+    }
+    fs::write(&fixture.path, &fixture.bytes).unwrap();
+    let session = Session::start(AudioOutput::Silent).unwrap();
+    let revision = session
+        .submit(Command::Add(vec![fixture.path.clone()]))
+        .unwrap();
+    let added = wait(&session, revision, |snapshot| snapshot.tracks.len() == 1);
+    let id = added.tracks[0].id;
+    let revision = session
+        .submit(Command::InspectTrack { id, force: true })
+        .unwrap();
+    let early = wait(&session, revision, |snapshot| {
+        snapshot.inspection.as_ref().is_some_and(|view| {
+            matches!(
+                view.status,
+                AnalysisStatus::Running {
+                    preview: Some(_),
+                    ..
+                }
+            )
+        })
+    });
+    assert_eq!(early.library_analysis[&id], LibraryAnalysisStatus::Running);
+    assert_eq!(early.current, None, "inspection must not start playback");
+    let AnalysisStatus::Running {
+        preview: Some(preview),
+        ..
+    } = &early.inspection.as_ref().unwrap().status
+    else {
+        unreachable!();
+    };
+    assert!(preview.duration_seconds > 32.0 && !preview.power_db.is_empty());
+    let final_snapshot = wait(&session, revision, |snapshot| {
+        snapshot
+            .inspection
+            .as_ref()
+            .is_some_and(|view| matches!(view.status, AnalysisStatus::Complete(_)))
+    });
+    let AnalysisStatus::Complete(report) = &final_snapshot.inspection.as_ref().unwrap().status
+    else {
+        unreachable!();
+    };
+    assert_eq!(preview.power_db, report.power_db);
+    assert_eq!(preview.tempo, report.tempo);
+    assert_eq!(
+        final_snapshot.library_analysis[&id],
+        LibraryAnalysisStatus::Complete
+    );
+    close(session);
+}
+
 /// Evicted matrices reopen from disk without touching music or entering the full-analysis queue.
 #[test]
 fn evicted_spectrogram_reopens_even_while_original_is_offline() {

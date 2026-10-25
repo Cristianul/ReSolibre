@@ -8,6 +8,7 @@ use std::fs::File;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    mpsc::{self, Receiver},
 };
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -38,6 +39,8 @@ pub(crate) struct TrackJob {
     progress: Arc<AtomicU64>,
     phase: Arc<AtomicUsize>,
     digest: Option<[u8; 32]>,
+    preview_receiver: Receiver<Arc<TrackAnalysis>>,
+    preview: Option<Arc<TrackAnalysis>>,
     thread: Option<JoinHandle<Result<CompletedTrack, &'static str>>>,
 }
 
@@ -63,6 +66,7 @@ impl TrackJob {
         let worker_phase = Arc::clone(&phase);
         let worker_cancel = Arc::clone(&cancel);
         let worker_progress = Arc::clone(&progress);
+        let (preview_sender, preview_receiver) = mpsc::sync_channel(1);
         let thread = thread::Builder::new()
             .name("resolibre-analysis".into())
             .spawn(move || {
@@ -165,6 +169,9 @@ impl TrackJob {
                 if !crate::analysis_cache::unchanged(&retained, key, &worker_cancel) {
                     return Err(UNAVAILABLE);
                 }
+                // Publish one immutable, source-checked plot before the slower detector runs.
+                // Its bounded matrix is copied once so the final verdict can be written independently.
+                let _ = preview_sender.try_send(Arc::new(report.clone()));
                 report.provenance = provenance::analyze(&retained, key, &report, &worker_cancel, &worker_phase);
                 if !crate::analysis_cache::unchanged(&retained, key, &worker_cancel) {
                     return Err(UNAVAILABLE);
@@ -194,8 +201,18 @@ impl TrackJob {
             progress,
             phase,
             digest: None,
+            preview_receiver,
+            preview: None,
             thread: Some(thread),
         })
+    }
+
+    /// Receives at most one complete spectral/tempo preview without waiting on the detector or transport.
+    pub(crate) fn preview(&mut self) -> Option<Arc<TrackAnalysis>> {
+        if let Ok(report) = self.preview_receiver.try_recv() {
+            self.preview = Some(report);
+        }
+        self.preview.as_ref().map(Arc::clone)
     }
 
     /// Returns only a completed worker's validated original-audio key for historical report inspection.

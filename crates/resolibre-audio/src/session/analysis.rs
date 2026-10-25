@@ -19,6 +19,8 @@ pub enum AnalysisStatus {
     Running {
         decoded_seconds: f64,
         phase: AnalysisPhase,
+        /// Source-checked full spectrum/tempo; provenance is pending until Complete.
+        preview: Option<Arc<resolibre_core::analysis::TrackAnalysis>>,
     },
     Complete(Arc<resolibre_core::analysis::TrackAnalysis>),
     Cancelled,
@@ -297,6 +299,7 @@ impl AnalysisRuntime {
         snapshot.analysis = AnalysisStatus::Running {
             decoded_seconds: 0.0,
             phase: AnalysisPhase::Opening,
+            preview: None,
         };
     }
 
@@ -349,6 +352,7 @@ impl AnalysisRuntime {
                 } else {
                     AnalysisPhase::Opening
                 },
+                preview: None,
             }
         };
         snapshot.inspection = Some(AnalysisInspection { id, status });
@@ -532,6 +536,7 @@ impl AnalysisRuntime {
                 let status = AnalysisStatus::Running {
                     decoded_seconds: active.job.progress(),
                     phase: active.job.phase(),
+                    preview: active.job.preview(),
                 };
                 if current {
                     snapshot.analysis = status.clone();

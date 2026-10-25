@@ -35,7 +35,15 @@ fn measure_authorized_recording() {
     }
     let mut job = TrackJob::start(file, key, None).unwrap();
     let mut last_phase = None;
+    let mut preview_time = None;
     loop {
+        if preview_time.is_none() && job.preview().is_some() {
+            preview_time = Some(started.elapsed());
+            println!(
+                "spectrogram preview elapsed={:.3}s",
+                started.elapsed().as_secs_f64()
+            );
+        }
         let phase = job.phase();
         if last_phase != Some(phase) {
             println!(
@@ -70,6 +78,75 @@ fn measure_authorized_recording() {
             "probe deadline"
         );
         thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Full spectral/tempo results arrive before inference, and cancelling then cannot persist a partial report.
+#[test]
+fn preview_precedes_source_detection_and_cancel_keeps_cache_empty() {
+    use resolibre_core::analysis::provenance::ProvenanceReport;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("source.wav");
+    source_wav(&path, 30);
+    let original = std::fs::read(&path).unwrap();
+    for cancel_after_preview in [true, false] {
+        let directory = root.path().join(if cancel_after_preview {
+            "cancelled"
+        } else {
+            "completed"
+        });
+        let config = Arc::new(crate::analysis_cache::CacheConfig::new(directory));
+        let mut job = TrackJob::start_input(
+            TrackInput::Path(path.clone()),
+            Some(Arc::clone(&config)),
+            false,
+        )
+        .unwrap();
+        let started = Instant::now();
+        let preview = loop {
+            if let Some(preview) = job.preview() {
+                break preview;
+            }
+            assert!(
+                job.poll().is_none(),
+                "source detection must not gate the preview"
+            );
+            assert!(started.elapsed() < Duration::from_secs(15));
+            thread::sleep(Duration::from_millis(1));
+        };
+        let preview_time = started.elapsed();
+        assert!(preview.duration_seconds > 29.9 && !preview.power_db.is_empty());
+        assert_eq!(preview.provenance, ProvenanceReport::Unavailable);
+        assert!(!config.database().unwrap().has_tracks().unwrap());
+        if cancel_after_preview {
+            job.cancel();
+        }
+        let result = loop {
+            if let Some(result) = job.poll() {
+                break result;
+            }
+            assert!(started.elapsed() < Duration::from_secs(30));
+            thread::sleep(Duration::from_millis(1));
+        };
+        if cancel_after_preview {
+            assert!(result.is_err());
+            assert!(!config.database().unwrap().has_tracks().unwrap());
+        } else {
+            let final_report = result.unwrap();
+            assert!(matches!(
+                final_report.provenance,
+                ProvenanceReport::Measured { .. }
+            ));
+            assert_eq!(preview.power_db, final_report.power_db);
+            assert_eq!(preview.tempo, final_report.tempo);
+            assert!(config.database().unwrap().has_tracks().unwrap());
+            eprintln!(
+                "preview {:.3} s; full report {:.3} s",
+                preview_time.as_secs_f64(),
+                started.elapsed().as_secs_f64()
+            );
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), original);
     }
 }
 

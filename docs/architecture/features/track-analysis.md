@@ -11,10 +11,11 @@ Changing diagnostics, BPM, beats, jobs or UI. Use `track-analysis`.
 
 ## Current Behavior
 
-The artwork chart button opens title, progress, Cancel/retry and plot scales,
-including after Stop. Completed views survive navigation; unfinished current-track views are interrupted. [Library badges](library-analysis.md) inspect their own occurrence
-without playback. Closing cancels only view work; the [cache](analysis-cache.md)
-reuses results. Idle sources open read-only in the analysis worker.
+Artwork and [Library badges](library-analysis.md) open diagnostics, including after
+Stop. Source-checked spectrum/BPM appears before lossy-source detection finishes.
+Its progress then becomes a verdict without rebuilding the plot or selection.
+Complete views survive navigation; pending current-track views reject other generations.
+Cancel can keep a preview in the view; only final reports enter the [cache](analysis-cache.md).
 
 A selectable BPM lane shows boundaries, local estimates and gray unknown gaps on
 the shared time axis. Hover, click or keyboard selection shows interval timestamps;
@@ -119,20 +120,19 @@ one-sample streams, multichannel phase, video/default streams and repeated retai
 reads. Session: completion during playback, pause/cancel/replacement, stale generations
 and automatic BPM/next-track cache without Analyze. UI: keyboard artwork activation,
 close/focus restoration, frozen inspection/replacement, local BPM/ranges, zone
-selection, unknown gaps and invalid/oversized geometry. Native 1x/2x captures check
-scales/wrapping; a production journey checks Cancel/retry, measured BPM, closing
-and keyboard reopening. Run workspace tests and
+selection, gaps, invalid geometry and early preview/final-verdict updates. Tests
+cover cancellation before saving, stale generations and preserved plot selection.
+Native 1x/2x captures cover scales, Cancel/retry and keyboard reopening. Run tests and
 `analysis_window::tests::native_analysis_preview`.
 
 `check_playback_responsiveness.py --session-worker --track-analysis --trials 3`
 adds analysis to the private marker/control audio workload and samples player/owned
 decoder RSS. Short runs do not meet the 100-trial gate; report platform/device/GPU separately.
 
-Earlier Linux: 360 lifecycle cycles passed (96.47 MiB audio); CPU 6.60–9.79% exceeded 5%,
-software desktop 327/365 MiB exceeded 200 MiB. Hardware rendering, 100-trial gates
-and broad music accuracy remain open. Optimized core/RustFFT reduced one authorized
-232.88 s FLAC analysis from 34.28 s to 1.83 s; rhythm excerpt: 0.24 s.
-Local observations; no media bundled.
+Earlier Linux: 360 cycles passed; audio 96.47 MiB, CPU 6.60–9.79% exceeded 5%,
+software desktop 327/365 MiB exceeded 200 MiB. Hardware/100-trial/music gates remain
+open. Core/RustFFT optimization: a 232.88 s FLAC fell from 34.28 s to 1.83 s; rhythm
+excerpt 0.24 s. Local observations; no media bundled.
 
 ## Edge Cases
 

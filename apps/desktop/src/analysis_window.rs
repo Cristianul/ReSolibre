@@ -24,6 +24,7 @@ pub(crate) struct AnalysisHost {
     track_id: Rc<Cell<Option<u64>>>,
     source_duration: Option<f64>,
     rendered: Option<Arc<TrackAnalysis>>,
+    completed: bool,
     requested_revision: u64,
     source_bits: Option<u8>,
 }
@@ -114,6 +115,7 @@ impl AnalysisHost {
         }
         .or_else(|| track.and_then(|track| track.duration_seconds.map(f64::from)));
         self.rendered = None;
+        self.completed = false;
         let window = self
             .window
             .as_ref()
@@ -188,7 +190,7 @@ impl AnalysisHost {
         else {
             return;
         };
-        if snapshot.revision < self.requested_revision || self.rendered.is_some() {
+        if snapshot.revision < self.requested_revision || self.completed {
             return;
         }
         if self.track_id.get().is_none() && self.generation.get() != Some(snapshot.generation) {
@@ -216,7 +218,38 @@ impl AnalysisHost {
             AnalysisStatus::Running {
                 decoded_seconds,
                 phase,
+                preview,
             } => {
+                if let Some(report) = preview {
+                    if self
+                        .rendered
+                        .as_ref()
+                        .is_none_or(|previous| !Arc::ptr_eq(previous, report))
+                    {
+                        show_measurements(window, report, self.source_bits);
+                        self.rendered = Some(Arc::clone(report));
+                    }
+                    window
+                        .set_status_text("Spectrogram and BPM ready · source check running".into());
+                    let progress = match phase {
+                        resolibre_audio::session::AnalysisPhase::DetectingSource { .. }
+                        | resolibre_audio::session::AnalysisPhase::Saving => {
+                            analysis_progress(*phase, *decoded_seconds, self.source_duration)
+                        }
+                        _ => "Preparing lossy-source check…".into(),
+                    };
+                    window.set_provenance_text(progress.into());
+                    return;
+                }
+                if self.rendered.take().is_some() {
+                    window.set_ready(false);
+                    window.set_plot(Image::default());
+                    window.set_tempo_zones(Default::default());
+                    window.set_tempo_text("BPM: analyzing rhythmic changes…".into());
+                    window.set_provenance_text(
+                        "Lossy-source detection: waiting for audio analysis…".into(),
+                    );
+                }
                 let progress = analysis_progress(*phase, *decoded_seconds, self.source_duration);
                 window.set_status_text(progress.into());
                 if self.track_id.get().is_none()
@@ -226,38 +259,30 @@ impl AnalysisHost {
                 }
             }
             AnalysisStatus::Complete(report) => {
-                window.set_plot(render(report));
-                window.set_tempo_zones(timeline::zones(report));
-                window.set_ready(true);
-                window.set_nyquist(
-                    format!("{:.2} kHz", f64::from(report.sample_rate_hz) / 2000.0).into(),
-                );
-                window.set_half_nyquist(
-                    format!("{:.1} kHz", f64::from(report.sample_rate_hz) / 4000.0).into(),
-                );
-                window.set_duration(
-                    format!(
-                        "{}:{:02}",
-                        report.duration_seconds as u64 / 60,
-                        report.duration_seconds as u64 % 60
-                    )
-                    .into(),
-                );
+                if self
+                    .rendered
+                    .as_ref()
+                    .is_none_or(|previous| !same_measurements(previous, report))
+                {
+                    show_measurements(window, report, self.source_bits);
+                }
                 window.set_status_text(
                     format!("Complete · {:.1} s analyzed", report.duration_seconds).into(),
                 );
-                window.set_frequency_note(frequency_note(report.sample_rate_hz).into());
-                window.set_tempo_text(tempo_text(&report.tempo).into());
                 window.set_provenance_text(provenance::describe(report.provenance).into());
-                let precision = self
-                    .source_bits
-                    .map(|bits| format!("Source bit depth: {bits}-bit."))
-                    .unwrap_or_else(|| "Source bit depth: unknown for this format.".into());
-                let bandwidth = report.sustained_bandwidth_hz.map(|hz| format!("Sustained spectral extent: approximately {:.1} kHz.", hz / 1000.0)).unwrap_or_else(|| "Sustained spectral extent: inconclusive (silence, very short or weak audio).".into());
-                window.set_interpretation(format!("{bandwidth} Filtering, instruments and recording can also limit bandwidth. {precision} Lossless describes the codec; analysis cannot certify the original recording. Tempo and downbeat interpretation require review before automatic mixing.").into());
+                self.completed = true;
                 self.rendered = Some(Arc::clone(report));
             }
             AnalysisStatus::Cancelled | AnalysisStatus::Unavailable => {
+                if matches!(status, AnalysisStatus::Cancelled) && self.rendered.is_some() {
+                    window.set_status_text(
+                        "Source check cancelled · spectrogram and BPM retained for this view"
+                            .into(),
+                    );
+                    window.set_provenance_text("Lossy-source detection: cancelled".into());
+                    self.completed = true;
+                    return;
+                }
                 window.set_ready(false);
                 window.set_plot(Image::default());
                 window.set_tempo_text("BPM: not available".into());
@@ -277,12 +302,59 @@ impl AnalysisHost {
     /// Releases the window and image during main-window shutdown; the session cancels/reaps its decoder.
     pub(crate) fn close(&mut self) {
         self.rendered = None;
+        self.completed = false;
         if let Some(window) = self.window.take()
             && window.hide().is_err()
         {
             eprintln!("warn: cannot hide analysis window during shutdown");
         }
     }
+}
+
+/// Renders validated spectral/tempo measurements without presenting a pending source check as a verdict.
+fn show_measurements(window: &AnalysisWindow, report: &TrackAnalysis, source_bits: Option<u8>) {
+    window.set_plot(render(report));
+    window.set_tempo_zones(timeline::zones(report));
+    window.set_ready(true);
+    window.set_nyquist(format!("{:.2} kHz", f64::from(report.sample_rate_hz) / 2000.0).into());
+    window.set_half_nyquist(format!("{:.1} kHz", f64::from(report.sample_rate_hz) / 4000.0).into());
+    window.set_duration(
+        format!(
+            "{}:{:02}",
+            report.duration_seconds as u64 / 60,
+            report.duration_seconds as u64 % 60
+        )
+        .into(),
+    );
+    window.set_frequency_note(frequency_note(report.sample_rate_hz).into());
+    window.set_tempo_text(tempo_text(&report.tempo).into());
+    let precision = source_bits
+        .map(|bits| format!("Source bit depth: {bits}-bit."))
+        .unwrap_or_else(|| "Source bit depth: unknown for this format.".into());
+    let bandwidth = report
+        .sustained_bandwidth_hz
+        .map(|hz| {
+            format!(
+                "Sustained spectral extent: approximately {:.1} kHz.",
+                hz / 1000.0
+            )
+        })
+        .unwrap_or_else(|| {
+            "Sustained spectral extent: inconclusive (silence, very short or weak audio).".into()
+        });
+    window.set_interpretation(format!("{bandwidth} Filtering, instruments and recording can also limit bandwidth. {precision} Lossless describes the codec; analysis cannot certify the original recording. Tempo and downbeat interpretation require review before automatic mixing.").into());
+}
+
+/// Final source detection must not rebuild an unchanged plot or reset the selected tempo interval.
+fn same_measurements(previous: &TrackAnalysis, report: &TrackAnalysis) -> bool {
+    previous.sample_rate_hz == report.sample_rate_hz
+        && previous.channels == report.channels
+        && previous.duration_seconds == report.duration_seconds
+        && previous.columns == report.columns
+        && previous.seconds_per_column == report.seconds_per_column
+        && previous.sustained_bandwidth_hz == report.sustained_bandwidth_hz
+        && previous.tempo == report.tempo
+        && previous.power_db == report.power_db
 }
 
 /// Reports actual stages; the decode percentage never masquerades as overall completion.

@@ -48,6 +48,11 @@ both decision bands force inconclusive. Scores are not calibrated probabilities
 of authenticity. A single suspicious excerpt is not a whole-track certificate.
 Unavailable detector work preserves completed spectrum/tempo; retry is explicit.
 
+The worker publishes one source-checked spectral/tempo preview before inference.
+A one-slot channel holds a bounded report copy (matrix ≤512 KiB); no early verdict
+or cache entry is created. The UI keeps its plot/selection while detector progress
+updates, then displays the final verdict. Cancellation never persists the preview.
+
 The existing single full-analysis worker owns decoding and inference. A separate
 90-second cooperative deadline applies to this stage. Cancellation is checked
 between blocks and before/after model calls; initialization and one bounded
