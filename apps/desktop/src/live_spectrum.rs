@@ -159,12 +159,13 @@ mod tests {
 
     /// Exercises real native PCM and display timers, capturing motion before and after a paused seek.
     #[test]
-    #[ignore = "requires isolated KWin/XWayland; run through check_window_snap.py"]
+    #[ignore = "requires a Windows desktop or isolated KWin/XWayland and RESOUL_PREVIEW_DIR"]
     fn native_motion() {
         use resolibre_audio::{
             AudioOutput,
             session::{Command, Session},
         };
+        #[cfg(unix)]
         crate::window_snap::select_x11().unwrap();
         let directory =
             std::env::temp_dir().join(format!("resolibre-live-ui-{}", std::process::id()));
@@ -241,10 +242,18 @@ mod tests {
                     4 if window.get_playing()
                         && checkpoint.elapsed() > Duration::from_millis(350) =>
                     {
+                        let observation = controller.borrow().snapshot();
                         assert!(
-                            levels.iter().any(|level| *level > 0.3),
-                            "resume lacks real audio"
+                            checkpoint.elapsed() < Duration::from_secs(3),
+                            "resume lacks real audio: state {:?}, position {:?}, measured {:?}",
+                            observation.state,
+                            observation.position,
+                            observation.live_spectrum
                         );
+                        // Native read-ahead and rendering vary with DPI; wait for measured, clock-due power.
+                        if !levels.iter().any(|level| *level > 0.3) {
+                            return;
+                        }
                         save_frame(&window, "live-after-seek");
                         window.invoke_stop();
                         stage = 5;
@@ -268,7 +277,9 @@ mod tests {
     /// Saves a native rendered frame in the harness-owned output directory.
     fn save_frame(window: &PlayerWindow, name: &str) {
         let output = std::path::PathBuf::from(std::env::var_os("RESOUL_PREVIEW_DIR").unwrap());
-        let scale = std::env::var("WINIT_X11_SCALE_FACTOR").unwrap();
+        let scale = std::env::var("SLINT_SCALE_FACTOR")
+            .or_else(|_| std::env::var("WINIT_X11_SCALE_FACTOR"))
+            .unwrap_or_else(|_| "1".into());
         let pixels = window.window().take_snapshot().unwrap();
         image::save_buffer(
             output.join(format!("{name}-{scale}x.png")),

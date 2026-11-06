@@ -1,7 +1,7 @@
 //! Portable logarithmic band reduction and time-based display motion.
 
 mod consumer;
-pub use consumer::{LiveConsumer, PcmChunk};
+pub use consumer::{BandMeasurement, LiveConsumer, PcmChunk};
 
 use super::{BIN_COUNT, FFT_SIZE, SpectrumFrame};
 
@@ -13,6 +13,21 @@ pub struct LiveLevels {
     pub levels: [f32; BAND_COUNT],
 }
 
+/// Defines the shared 40 Hz–16 kHz logarithmic boundaries for native and FFT measurements.
+pub fn band_edges() -> [f64; BAND_COUNT + 1] {
+    std::array::from_fn(|band| 40.0 * 400_f64.powf(band as f64 / BAND_COUNT as f64))
+}
+
+/// Maps measured mean-square energy to the shared display range; invalid values remain dark.
+pub fn levels_from_band_power(power: [f64; BAND_COUNT]) -> [f32; BAND_COUNT] {
+    power.map(|energy| {
+        if !energy.is_finite() || energy <= 1e-7 {
+            return 0.0;
+        }
+        ((10.0 * energy.log10() + 70.0) / 60.0).clamp(0.0, 1.0) as f32
+    })
+}
+
 /// Integrates bin energy into fixed 40 Hz–16 kHz logarithmic bands, then maps -70..-10 dB to height.
 /// Fractional-bin overlap avoids empty low-frequency bands; frequencies above Nyquist stay empty.
 pub fn reduce(frame: &SpectrumFrame) -> [f32; BAND_COUNT] {
@@ -20,8 +35,7 @@ pub fn reduce(frame: &SpectrumFrame) -> [f32; BAND_COUNT] {
         return [0.0; BAND_COUNT];
     }
     let mut power = [0.0_f64; BAND_COUNT];
-    let edges: [f64; BAND_COUNT + 1] =
-        std::array::from_fn(|band| 40.0 * 400_f64.powf(band as f64 / BAND_COUNT as f64));
+    let edges = band_edges();
     let spacing = f64::from(frame.sample_rate_hz) / FFT_SIZE as f64;
     let mut first_band = 0;
     for bin in 1..BIN_COUNT {
@@ -47,12 +61,7 @@ pub fn reduce(frame: &SpectrumFrame) -> [f32; BAND_COUNT] {
             *sum += energy * overlap / spacing;
         }
     }
-    power.map(|energy| {
-        if energy <= 1e-7 {
-            return 0.0;
-        }
-        ((10.0 * energy.log10() + 70.0) / 60.0).clamp(0.0, 1.0) as f32
-    })
+    levels_from_band_power(power)
 }
 
 /// Advances toward real measured targets with a 35 ms attack and 180 ms release, without overshoot.

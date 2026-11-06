@@ -1,8 +1,8 @@
 # Analysis and radio target
 
-Status: partially implemented. Spectral/tempo analysis works on Linux; Track
-Radio and genre inference need experiments. Internet radio and similar-track queues are distinct. A [live spectrum](../features/live-spectrum.md)
-uses shared STFT; [full-track analysis/BPM](../features/track-analysis.md) works on Linux.
+Status: partial. [Spectral/tempo analysis](../features/track-analysis.md) and
+[live spectrum](../features/live-spectrum.md) run on Linux/Windows. Track Radio,
+genre inference and Internet radio remain separate future work.
 
 ## Useful audio diagnostics
 
@@ -24,18 +24,16 @@ Approved, 2026-10-24: [lossy-source detection](../features/lossy-source-detectio
 uses pinned offline lossprint, including Windows. Preserve uncertainty; measure
 resources and integration accuracy separately from upstream benchmarks.
 
-Approved UI: lossless-encoding badge and measured local BPM below the title; one full-analysis button appears
-on artwork hover/keyboard focus and opens a grouped window with clear
-measurements, interpretation and uncertainty. The always-enabled live spectrum
-occupies the space between playback buttons and volume dial, preserving artwork.
-Continuous unsegmented bars appear as diffused light beneath the chassis plastic,
-without a framed display. Smooth attack/release motion follows measured audio;
-presentation cadence is independent of analysis cadence, targeting 60 frames/s
-where supported within existing resource budgets.
-It reacts automatically during playback; pause freezes, stop/EOF clears, and
-hidden/minimized views suspend visual work. The [focused plan](../../plans/track-analysis-plan.md)
-records prerequisites and acceptance. The [technical strip](../features/track-information.md)
-and analysis work on Linux; other platform adapters and device validation remain pending.
+Approved UI: lossless-encoding badge and measured local BPM below the title.
+One analysis button on artwork hover/keyboard focus opens grouped measurements,
+interpretation and uncertainty. Always-enabled live bars sit between playback
+controls and volume, preserving artwork. Continuous bars appear as diffused light
+beneath chassis plastic, without a frame. Smooth attack/release follows measured
+audio, targeting 60 frames/s independently of analysis within resource budgets.
+Pause freezes; stop/EOF clears; hidden/minimized views suspend animation.
+The [focused plan](../../plans/track-analysis-plan.md)
+records prerequisites and acceptance. [Track facts](../features/track-information.md)
+also work on Linux/Windows; mobile adapters and device validation remain pending.
 
 ## Shared background execution
 
@@ -45,11 +43,14 @@ decoder/output/tap implementations are allowed. Do not make a Linux monitor a
 required feature dependency. Prove PCM access, timing, resource cost and privacy
 for the intended platforms before selecting the live-analysis route.
 
-Decision, 2026-10-22: retain libmpv and pursue an owned PCM filter. Engine migration
-is not selected. The [isolated Linux proof](../../testing/live-tap-validation.md)
-preserves captured audio and tolerates a stalled reader. Linux lifecycle checks
-pass; physical synchronization and Windows/mobile packaging remain open. This is no performance or
-sound-quality claim for a replacement engine.
+Decision, 2026-10-22: retain libmpv and an owned PCM filter. The
+[Linux proof](../../testing/live-tap-validation.md) preserves audio with a stalled reader.
+Windows implementation, 2026-10-28: the supplied runtime lacks LADSPA. Its native
+bandpass/RMS filters provide bounded measurements from the same playback graph;
+core shares bands, height mapping, timing and lifecycle. This is a filter-bank
+display, not Linux STFT parity. PCM preservation/lifecycle checks pass on both.
+No extra decoder, system capture or plugin download is required. Physical sync,
+full resource gates and mobile packaging remain open.
 
 Playback must not depend on analysis completion. Share reusable analysis logic
 across clients where possible; platform scheduling/storage remain capabilities.

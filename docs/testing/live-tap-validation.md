@@ -76,14 +76,13 @@ observable optional-analysis failure, never break otherwise playable music.
 | Platform | Packaging investigation; not execution evidence |
 | --- | --- |
 | Linux | Shared library and FFmpeg LADSPA work in the isolated harness. |
-| Windows | FFmpeg's wrapper uses `dlfcn.h`/`dlopen`; a compatible build and loader bridge, DLL exports and path handling need verification. |
+| Windows | Current runtime lacks LADSPA; the [native band-measurement adapter](../architecture/features/live-spectrum.md) avoids plugin loading. |
 | Android | Package native libraries per ABI and enable LADSPA in the owned FFmpeg build; upstream mpv-android's current build script does not request it. NDK/device lifecycle tests remain. |
 | iOS | Investigate bundled signed library/framework loading and FFmpeg configuration; no executable downloads or writable plugin search path. Device tests remain. |
 
-No ordinary Linux monitor becomes the portable contract. This repository still
-has a Linux-only playback adapter; portable shared results are not a completed
-Windows/mobile port. Platform builds and physical-device synchronization remain
-open. The integrated graph lifecycle and bounded transport are described below.
+No ordinary Linux monitor becomes the portable contract. Windows now has a
+separate native adapter; this historical proof is Linux evidence. Mobile builds
+and physical synchronization remain open. Linux integration follows below.
 
 ## Integrated runtime
 
@@ -112,7 +111,7 @@ playback CPU, 7.99–9.79% control CPU and at most 85.55 MiB across repeated cyc
 These samples fit the proposed CPU/memory thresholds, but three trials do not
 replace the full 100-trial percentile protocol. Harness/monitor costs are separate.
 
-Windows/mobile execution, physical audio/visual latency, full percentile runs
+Mobile execution, physical audio/visual latency, full percentile runs
 and desktop GPU/resource acceptance remain open. The architecture keeps the
 loader/build platform-specific and shared facts/FFT/bands/motion in portable core.
 

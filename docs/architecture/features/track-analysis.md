@@ -140,9 +140,9 @@ Cached measurements are observations, not verified provenance.
 Variable/no-beat regions must not be extrapolated into a synthetic beat grid.
 Four-hour/deadline failures allow retry; native teardown depends on OS scheduling.
 File identity guards jobs; audio hashes key persistence.
-Linux execution is validated here; Windows/Android/iOS native decoding, loading,
-packaging and device lifecycles remain unvalidated. Shared Rust code alone does not
-establish a working port. MIX owns transitions separately.
+Linux and [Windows](../../development/windows-native.md) native decoding/loading
+are tested. Distribution audits, broad device lifecycles and mobile adapters remain
+open. MIX owns transitions separately.
 
 ## Related Docs
 

@@ -31,6 +31,9 @@ Optional switches are `-Offline`, `-Jobs N`, `-Run`, and `-Python <executable>`.
 The Python entries also work; Windows outputs have the `.exe` suffix.
 See [Windows prerequisites, runtime staging and validation](windows-native.md).
 
+Git keeps Markdown files in LF format on both platforms through `.gitattributes`,
+so the documentation byte budgets are identical with Windows `core.autocrlf` enabled.
+
 Debug uses Cargo's development profile with debugger symbols and assertions;
 the existing core/RustFFT optimization keeps interactive DSP usable. Release
 uses optimization level 3, thin link-time optimization, one code-generation unit

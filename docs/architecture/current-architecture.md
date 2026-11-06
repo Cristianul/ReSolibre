@@ -7,4 +7,4 @@ Catalog, named playlists and SMB remain planned. Native cleanup has no hard dead
 device latency is unproven.
 
 [Playback](features/local-playback.md), [UI](features/local-desktop-player.md),
-[Windows x64](../development/windows-native.md); Live Spectrum is Linux-only.
+[Windows](../development/windows-native.md), [live bars](features/live-spectrum.md).

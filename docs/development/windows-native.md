@@ -14,9 +14,9 @@ The [delivery target](../architecture/target/delivery-and-licensing.md) owns pac
 
 The native MSVC build produces `resolibre-desktop.exe`. It uses the shared Slint
 UI, session, queue, EQ, metadata and original-audio analysis. No WSL is involved.
-Live Spectrum remains unavailable on Windows: its sealed Linux LADSPA loader
-has not been ported. The UI reports this without stopping playback; file analysis
-and its spectrogram are separate and remain available.
+[Live Spectrum](../architecture/features/live-spectrum.md) uses the runtime's
+native bandpass/RMS filters, with shared bands/timing and no extra plugin DLL.
+Full-track analysis and its spectrogram remain separate.
 
 Prerequisites: Python 3.9+, x64 MSVC Rust/Cargo, Visual C++ Build Tools with the
 C++ desktop workload and Windows SDK. Provide x64 `libmpv-2.dll`, `ffmpeg.exe`
@@ -67,36 +67,35 @@ with the player without enumerating unrelated windows.
 - `crates/resolibre-audio/src/platform/`: retained input streams and helper pipes.
 - `crates/resolibre-audio/src/platform/windows/pipe.rs`: event-driven pipe reads and cancellation.
 - `crates/resolibre-audio/src/original_audio/native/pipe.rs`: bounded PCM channel.
+- `crates/resolibre-audio/src/live_spectrum/windows/`: bounded native measurements/tests.
 - `apps/desktop/src/{path_encoding,profile_files,profile_storage}.rs`: native profile I/O.
 - `apps/desktop/src/profile_reset/windows.rs`, `window_snap/windows.rs`, `window_group/windows.rs`.
 
 ## Tests
 
-Reference: Windows x86_64, Rust 1.99.1 MSVC, Visual Studio Build Tools 17.14.42,
-Python 3.13.17, checked 2026-10-24. Both PowerShell build profiles produced PE
-executables. Owned native tests cover silent playback/seek, Unicode paths,
-source preservation, metadata, multi-buffer PCM analysis, prefix cancellation
-and device-path rejection. Desktop tests cover profile replacement, native path
-round-trips, competing leases, reset refusal and production restart/close flows.
-The complete workspace suite passed on this host (environment-dependent
-tests skipped, Windows device checks run explicitly). Native boundary checks cover maximum path lengths
-and database hardlink refusal. Clippy passed with warnings denied; Python build
-checks passed (9 tests, 1 Linux-only fixture skipped), as did documentation checks.
+Reference tools (2026-10-24): Windows x86_64, Rust 1.99.1 MSVC, Visual Studio Build
+Tools 17.14.42, Python 3.13.17. Rechecked 2026-10-28: both PowerShell build profiles
+and isolated startup/shutdown passed; runtime files and detector notices were staged.
+The workspace passed 301 tests (39 opt-in/environment tests ignored). Separate
+muted-device checks passed TRIM/MIX, phase alignment and repeated seek; native
+checks passed 450 pointer moves, group dragging/focus and analysis snapshots at 1x/2x.
+Live-band/PCM preservation and real 1x/2x pause/seek view journeys also passed.
+Coverage also includes Unicode/read-only sources, metadata/PCM, cancellation,
+device paths, profile replacement/path limits, leases, reset and restart/close.
+Clippy passed with warnings denied; Python build checks passed (10 tests, one
+Linux-only fixture skipped), as did formatting and documentation checks.
 
-A release-mode regression found that the original Windows peek/sleep reader
-throttled fast consumers: a 180-second stereo WAV took 6.32 s through the helper
-and 4.00 s through libmpv. Event-driven reads reduced those checks to 0.067 s and
-0.051 s. A 356-second, 192 kHz stereo FLAC previously exhausted TRIM's 15-second
-deadline; with a fresh profile it now starts with confirmed TRIM in about 1 s.
-MIX also completed the overlap and adopted the second stream on the Windows
-device with application volume zero. These are local observations, not universal
-latency or listening guarantees. Generated tests cover staggered writes, short
-reads, EOF, duplicate clients, pending connect/read cancellation and compressed
-stereo preparation. Run native performance regressions in Release as well as
+A Release pipe regression reduced 180-second WAV reads from 6.32/4.00 s
+(helper/libmpv) to 0.067/0.051 s. A 356-second 192 kHz FLAC now confirms TRIM
+in about 1 s instead of exhausting its 15-second deadline. Muted native MIX
+completed overlap/adoption. These are local observations, not listening guarantees.
+Tests cover staggered/short reads, EOF, duplicate clients, pending connect/read
+cancellation and compressed stereo. Run native performance regressions in Release as well as
 Debug: slower debug consumers masked the fixed-sleep bottleneck.
-One workspace run encountered an intermittent cache-reuse test failure while a
-build was also running. The isolated test and subsequent complete suite passed;
-the cache failure's cause was not established in this pipe fix.
+An earlier cache failure during the pipe fix was not diagnosed then. Checks on
+2026-10-28 separately reproduced concurrent directory/journal validation and
+SQLite lock conflicts. After their fixes, 100 offline plot reopenings passed
+under 0.5 seconds; hardlinks to every SQLite sidecar remain rejected.
 
 For Cargo tests, stage the runtime beside test executables or put its directory
 on this shell's PATH; helper binaries must be beside the audio test executable:
@@ -158,5 +157,4 @@ no extra ONNX DLL or runtime download is needed. Native build scripts include
 `licenses/lossprint-MIT.txt` and `licenses/tract-MIT.txt` beside the executable.
 See [sampling, resource bounds and test probes](../architecture/features/lossy-source-detection.md).
 
-Detector: GNU cross-build and Wine model/native-decoder probes passed. The new
-feature remains untested on the real MSVC host above.
+Native MSVC model/decoder, early preview and cancellation tests passed on 2026-10-28.

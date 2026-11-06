@@ -47,6 +47,10 @@ pub const FORMAT_DOUBLE: c_int = 5;
 pub const FORMAT_STRING: c_int = 1;
 pub const FORMAT_INT64: c_int = 4;
 pub const ERROR_PROPERTY_UNAVAILABLE: c_int = -10;
+#[cfg(windows)]
+pub const ERROR_PROPERTY_NOT_FOUND: c_int = -8;
+#[cfg(windows)]
+pub const ERROR_PROPERTY_ERROR: c_int = -11;
 pub const ERROR_COMMAND: c_int = -12;
 
 #[cfg_attr(unix, link(name = "mpv"))]

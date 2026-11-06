@@ -100,13 +100,12 @@ back to FLAC both returned likely lossy. These are smoke checks, not population
 accuracy, calibration or a physical-device performance gate. A generated PCM
 musical control and its low-pass/96 kHz upsampled variant both returned no traces.
 
-The audio crate and tests cross-compiled for Windows x86_64 GNU. Under an isolated
-Wine 11 prefix, three direct tests and four real-model probes passed with matching
-Linux verdicts; the full Windows libmpv/retained-file pipeline also detected the
-MP3-to-FLAC control. This validates Windows code execution under Wine, not native
-MSVC packaging, real Windows devices or interactive desktop behavior. Those remain
-unverified for this feature. The downloaded runtime/toolchains are ignored local
-validation inputs, not application dependencies.
+Windows x86_64 GNU/Wine 11 probes matched Linux verdicts, including the full
+libmpv/retained-file MP3-to-FLAC control. Native MSVC checks on 2026-10-28 also
+passed the embedded model/decoder, encoded variants, preview/final publication,
+cancellation without partial saves and original-byte preservation. These are
+generated-media smoke checks, not detector accuracy or physical listening gates.
+Runtime/toolchain downloads remain ignored local validation inputs.
 
 Linux control/resource smoke: six WAV/FLAC sessions and 360 open/seek/drop
 cycles passed with analysis active. Command dispatch maxima were 1.07/1.02 ms;

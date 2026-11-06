@@ -68,6 +68,51 @@ fn track() -> TrackAnalysis {
     analyzer.finish().unwrap()
 }
 
+/// Background readers tolerate a short Windows commit without bypassing the persistent cache.
+#[test]
+fn cache_opens_while_another_worker_holds_a_write_transaction() {
+    let fixture = Fixture::new();
+    let mut writer = fixture.cache();
+    writer.save_track(&identity(), &track()).unwrap();
+    let transaction = writer
+        .connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)
+        .unwrap();
+    transaction
+        .execute("UPDATE analyses SET accessed=0", [])
+        .unwrap();
+    std::thread::scope(|scope| {
+        let directory = fixture.0.join("cache");
+        let (starting, started) = std::sync::mpsc::channel();
+        let reader = scope.spawn(move || {
+            starting.send(()).unwrap();
+            AnalysisCache::open(&directory)
+        });
+        started.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        transaction.rollback().unwrap();
+        assert!(reader.join().unwrap().unwrap().has_tracks().unwrap());
+    });
+}
+
+/// A persistently locked cache fails within a bounded wait and preserves its saved report.
+#[test]
+fn persistent_write_lock_fails_without_losing_cached_data() {
+    let fixture = Fixture::new();
+    let mut writer = fixture.cache();
+    let key = identity();
+    writer.save_track(&key, &track()).unwrap();
+    let transaction = writer
+        .connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Exclusive)
+        .unwrap();
+    let started = std::time::Instant::now();
+    assert!(AnalysisCache::open(&fixture.0.join("cache")).is_err());
+    assert!(started.elapsed() < Duration::from_secs(2));
+    transaction.rollback().unwrap();
+    assert!(writer.track_snapshot(&key.digest).unwrap().is_some());
+}
+
 /// Historical display reads preserve labels, enforce payload validity and remain isolated by profile.
 #[test]
 fn snapshot_read_is_bounded_validated_and_preserves_labels() {

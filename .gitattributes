@@ -1,0 +1,3 @@
+# Keep documented UTF-8 reading budgets identical on Linux and Windows checkouts.
+.gitattributes text eol=lf
+*.md text eol=lf

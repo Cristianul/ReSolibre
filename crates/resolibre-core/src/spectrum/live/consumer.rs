@@ -1,8 +1,10 @@
 //! Shared bounded live scheduling and stale-stream rejection, independent of any native audio engine.
 
-use super::{BAND_COUNT, LiveLevels, reduce};
+use super::{BAND_COUNT, LiveLevels, levels_from_band_power, reduce};
 use crate::spectrum::{AnalysisError, FFT_SIZE, MAX_CHANNELS, MAX_INPUT_FRAMES, SpectrumAnalyzer};
 use std::collections::VecDeque;
+
+const MAX_PENDING_MEASUREMENTS: usize = 128;
 
 /// One complete interleaved block with an adapter-assigned increasing stream instance and source counter.
 pub struct PcmChunk<'a> {
@@ -11,6 +13,16 @@ pub struct PcmChunk<'a> {
     pub channels: usize,
     pub first_frame: u64,
     pub samples: &'a [f32],
+}
+
+/// One bounded native filter-bank observation, with source-frame timing and channel-averaged power.
+pub struct BandMeasurement {
+    pub instance: u32,
+    pub rate: u32,
+    pub channels: usize,
+    pub end_frame: u64,
+    pub window_frames: u32,
+    pub power: [f64; BAND_COUNT],
 }
 
 pub struct LiveConsumer {
@@ -40,7 +52,7 @@ impl Default for LiveConsumer {
             origin: 0,
             offset: 0.0,
             epoch: 0,
-            pending: VecDeque::with_capacity(128),
+            pending: VecDeque::with_capacity(MAX_PENDING_MEASUREMENTS),
             levels: [0.0; BAND_COUNT],
         }
     }
@@ -85,6 +97,64 @@ impl LiveConsumer {
             .checked_add((chunk.samples.len() / chunk.channels) as u64)
             .ok_or(AnalysisError::PositionOverflow)?;
         self.analyze(&chunk)
+    }
+
+    /// Applies the same generation, clock, queue and display policy to measured native band power.
+    pub fn accept_bands(
+        &mut self,
+        measurement: BandMeasurement,
+        clock: f64,
+    ) -> Result<(), AnalysisError> {
+        let chunk = PcmChunk {
+            instance: measurement.instance,
+            rate: measurement.rate,
+            channels: measurement.channels,
+            first_frame: measurement.end_frame,
+            samples: &[],
+        };
+        validate(&chunk, clock)?;
+        if measurement.window_frames == 0
+            || measurement.window_frames as usize > MAX_INPUT_FRAMES
+            || measurement.end_frame < u64::from(measurement.window_frames)
+        {
+            return Err(AnalysisError::InvalidPosition);
+        }
+        if measurement
+            .power
+            .iter()
+            .any(|power| !power.is_finite() || *power < 0.0)
+        {
+            return Err(AnalysisError::NonFiniteSample);
+        }
+        if measurement.instance <= self.barrier || measurement.instance < self.instance {
+            return Ok(());
+        }
+        let changed = measurement.instance != self.instance
+            || measurement.rate != self.rate
+            || measurement.channels != self.channels;
+        if changed {
+            if self.instance != 0 {
+                self.offset = clock;
+            }
+            self.instance = measurement.instance;
+            self.rate = measurement.rate;
+            self.channels = measurement.channels;
+            self.analyzer = None;
+            self.next_frame = 0;
+            self.clear();
+        }
+        if measurement.end_frame <= self.next_frame {
+            return Ok(());
+        }
+        self.next_frame = measurement.end_frame;
+        let center = measurement.end_frame as f64 - f64::from(measurement.window_frames) / 2.0;
+        let time = self.offset + center / f64::from(measurement.rate);
+        if self.pending.len() == MAX_PENDING_MEASUREMENTS {
+            self.pending.pop_front();
+        }
+        self.pending
+            .push_back((time, levels_from_band_power(measurement.power)));
+        Ok(())
     }
 
     /// Advances only to measurements due at the supplied playback clock; pause preserves displayed energy.
@@ -158,7 +228,7 @@ impl LiveConsumer {
             analyzer.push(&chunk.samples[start_sample..end_sample], |frame| {
                 let center = (frame.start_frame + frame.end_frame) as f64 / 2.0;
                 let time = self.offset + (self.origin as f64 + center) / f64::from(chunk.rate);
-                if self.pending.len() == 128 {
+                if self.pending.len() == MAX_PENDING_MEASUREMENTS {
                     self.pending.pop_front();
                 }
                 self.pending.push_back((time, reduce(frame)));
@@ -206,6 +276,67 @@ fn validate(chunk: &PcmChunk<'_>, clock: f64) -> Result<(), AnalysisError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Supplies one native observation without synthetic PCM or adapter-specific metadata.
+    fn band_measurement(instance: u32, end_frame: u64) -> BandMeasurement {
+        let mut power = [0.0; BAND_COUNT];
+        power[4] = 0.01;
+        BandMeasurement {
+            instance,
+            rate: 8000,
+            channels: 2,
+            end_frame,
+            window_frames: 100,
+            power,
+        }
+    }
+
+    /// Native bands share clock scheduling, pause, bounded retention and stale-generation rejection.
+    #[test]
+    fn native_measurements_share_lifecycle_and_reject_invalid_energy() {
+        let mut consumer = LiveConsumer::default();
+        consumer
+            .accept_bands(band_measurement(1, 400), 0.0)
+            .unwrap();
+        assert_eq!(
+            consumer.present(0.0, false, false).levels,
+            [0.0; BAND_COUNT]
+        );
+        let first = consumer.present(0.1, false, false);
+        assert!(first.levels[4] > 0.8);
+        consumer
+            .accept_bands(band_measurement(1, 800), 0.1)
+            .unwrap();
+        assert_eq!(consumer.present(1.0, true, false), first);
+        consumer.seek(1, 5.0).unwrap();
+        consumer
+            .accept_bands(band_measurement(1, 1200), 5.0)
+            .unwrap();
+        assert_eq!(
+            consumer.present(6.0, false, false).levels,
+            [0.0; BAND_COUNT]
+        );
+        consumer
+            .accept_bands(band_measurement(2, 400), 5.0)
+            .unwrap();
+        let next = consumer.present(5.1, false, false);
+        assert_ne!(next.epoch, first.epoch);
+        assert!(next.levels[4] > 0.8);
+        let mut invalid = band_measurement(2, 800);
+        invalid.power[4] = f64::NAN;
+        assert_eq!(
+            consumer.accept_bands(invalid, 5.1),
+            Err(AnalysisError::NonFiniteSample)
+        );
+        assert_eq!(consumer.present(5.1, false, false), next);
+        for end in (800..30000).step_by(100) {
+            consumer
+                .accept_bands(band_measurement(2, end), 5.1)
+                .unwrap();
+        }
+        assert_eq!(consumer.pending.len(), MAX_PENDING_MEASUREMENTS);
+        assert_eq!(consumer.present(6.0, false, true).levels, [0.0; BAND_COUNT]);
+    }
 
     /// Borrows generated mono PCM with a source counter rather than exposing any adapter representation.
     fn chunk(instance: u32, first_frame: u64, samples: &[f32]) -> PcmChunk<'_> {

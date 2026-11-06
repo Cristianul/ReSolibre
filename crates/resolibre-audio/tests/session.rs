@@ -67,7 +67,10 @@ impl Fixture {
 impl Drop for Fixture {
     /// Verifies source preservation before deleting only this test's generated files.
     fn drop(&mut self) {
-        assert_eq!(fs::read(&self.path).unwrap(), self.bytes);
+        assert!(
+            fs::read(&self.path).unwrap() == self.bytes,
+            "generated source bytes changed"
+        );
         fs::remove_dir_all(&self.directory).unwrap();
     }
 }
@@ -1460,17 +1463,33 @@ fn rhythm_and_full_analysis_are_automatic_for_playback_and_mix() {
     wait(&session, revision, |snapshot| {
         snapshot.current == Some(0) && matches!(snapshot.rhythm, RhythmStatus::Ready(_))
     });
-    // An external rewrite invalidates the prepared report when its stream is opened for playback.
-    fixtures[1].bytes = fixtures[0].bytes.clone();
-    fs::write(&fixtures[1].path, &fixtures[1].bytes).unwrap();
+    #[cfg(unix)]
+    let expected_bpm = {
+        // Unix permits external rewrites; reopening must reject the old prepared report.
+        let replacement = fixtures[0].bytes.clone();
+        fs::write(&fixtures[1].path, &replacement).unwrap();
+        fixtures[1].bytes = replacement;
+        120.0
+    };
+    #[cfg(windows)]
+    let expected_bpm = {
+        use windows_sys::Win32::Foundation::ERROR_SHARING_VIOLATION;
+
+        // The retained Windows lookahead denies writes until playback/analysis releases it.
+        let error = fs::write(&fixtures[1].path, &fixtures[0].bytes).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(ERROR_SHARING_VIOLATION as i32));
+        assert!(fs::read(&fixtures[1].path).unwrap() == fixtures[1].bytes);
+        140.0
+    };
     let revision = session.submit(Command::Next).unwrap();
-    let changed = wait(&session, revision, |snapshot| {
+    let reopened = wait(&session, revision, |snapshot| {
         snapshot.current == Some(1) && matches!(snapshot.rhythm, RhythmStatus::Ready(_))
     });
-    let RhythmStatus::Ready(report) = changed.rhythm else {
+    let RhythmStatus::Ready(report) = reopened.rhythm else {
         unreachable!()
     };
-    assert!((report.bpm.unwrap() - 120.0).abs() < 0.5);
+    assert!((report.bpm.unwrap() - expected_bpm).abs() < 0.5);
+    #[cfg(unix)]
     assert!(!std::sync::Arc::ptr_eq(&next.report, &report));
     close(session);
 }

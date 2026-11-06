@@ -471,8 +471,9 @@ fn artwork_action_and_close_restore_focus() {
 
 /// Uses native rendering to inspect frequency/time/dB scales, long text and both DPI settings.
 #[test]
-#[ignore = "requires isolated native display and RESOUL_PREVIEW_DIR"]
+#[ignore = "requires a Windows desktop or isolated native display and RESOUL_PREVIEW_DIR"]
 fn native_analysis_preview() {
+    #[cfg(unix)]
     crate::window_snap::select_x11().unwrap();
     let window = AnalysisWindow::new().unwrap();
     window.set_track_title("Generated percussion · original audio analysis".into());
@@ -511,18 +512,7 @@ fn native_analysis_preview() {
             let last = window.get_tempo_zones().row_data(2).unwrap();
             crate::ui_tests::click(&window, &last.details);
             assert!(window.get_tempo_detail().contains("1:04.0–1:36.0"));
-            let pixels = window.window().take_snapshot().unwrap();
-            let directory =
-                std::path::PathBuf::from(std::env::var_os("RESOUL_PREVIEW_DIR").unwrap());
-            let scale = std::env::var("WINIT_X11_SCALE_FACTOR").unwrap_or_else(|_| "1".into());
-            image::save_buffer(
-                directory.join(format!("analysis-{scale}x.png")),
-                pixels.as_bytes(),
-                pixels.width(),
-                pixels.height(),
-                image::ColorType::Rgba8,
-            )
-            .unwrap();
+            save_window(window.window(), "analysis");
             slint::quit_event_loop().unwrap();
         },
     );
@@ -651,7 +641,9 @@ fn native_analysis_journey() {
 fn save_window(window: &slint::Window, name: &str) {
     let pixels = window.take_snapshot().unwrap();
     let directory = std::path::PathBuf::from(std::env::var_os("RESOUL_PREVIEW_DIR").unwrap());
-    let scale = std::env::var("WINIT_X11_SCALE_FACTOR").unwrap();
+    let scale = std::env::var("SLINT_SCALE_FACTOR")
+        .or_else(|_| std::env::var("WINIT_X11_SCALE_FACTOR"))
+        .unwrap_or_else(|_| "1".into());
     image::save_buffer(
         directory.join(format!("{name}-{scale}x.png")),
         pixels.as_bytes(),

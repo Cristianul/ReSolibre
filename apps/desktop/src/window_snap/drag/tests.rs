@@ -376,12 +376,12 @@ fn track_title_click_and_drag_remain_distinct() {
 }
 
 /// Actual native frames follow one-pixel requests in both directions; hidden/detached peers cannot drag.
-#[cfg(unix)]
 #[test]
-#[ignore = "requires isolated KWin/XWayland; run through check_window_snap.py"]
+#[ignore = "requires a Windows desktop or isolated KWin/XWayland; run individually"]
 fn native_direct_group_drag() {
-    use crate::window_snap::native_tests::SnapTestWindow;
+    use crate::window_snap::test_window::SnapTestWindow;
     use std::time::Duration;
+    #[cfg(unix)]
     select_x11().unwrap();
     let main = SnapTestWindow::new().unwrap();
     let queue = SnapTestWindow::new().unwrap();
@@ -400,6 +400,14 @@ fn native_direct_group_drag() {
     );
     main.show().unwrap();
     queue.show().unwrap();
+    let complete = Rc::new(std::cell::Cell::new(false));
+    let finished = Rc::clone(&complete);
+    let (cancel, deadline) = std::sync::mpsc::channel();
+    let watchdog = std::thread::spawn(move || {
+        if deadline.recv_timeout(Duration::from_secs(15)).is_err() {
+            let _ = slint::quit_event_loop();
+        }
+    });
     let timer = slint::Timer::default();
     let weak_main = main.as_weak();
     let weak_queue = queue.as_weak();
@@ -458,10 +466,14 @@ fn native_direct_group_drag() {
                 );
                 queue.hide().unwrap();
                 assert!(!group.begin_drag(main.window()));
+                finished.set(true);
                 slint::quit_event_loop().unwrap();
             }
             step += 1;
         },
     );
     main.run().unwrap();
+    let _ = cancel.send(());
+    watchdog.join().unwrap();
+    assert!(complete.get(), "native group drag exceeded its deadline");
 }

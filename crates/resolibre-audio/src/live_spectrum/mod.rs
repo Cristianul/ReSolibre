@@ -3,29 +3,48 @@
 #[cfg(unix)]
 mod native;
 #[cfg(windows)]
-#[path = "windows.rs"]
-mod native;
+mod windows;
+#[cfg(windows)]
+pub(crate) use windows::LiveSpectrum;
 
 use crate::LocalPlayer;
+use resolibre_core::spectrum::live::LiveLevels;
+#[cfg(unix)]
 use resolibre_core::spectrum::{
     AnalysisError,
-    live::{LiveConsumer, LiveLevels, PcmChunk},
+    live::{LiveConsumer, PcmChunk},
 };
 
+#[cfg(unix)]
 pub(crate) struct LiveSpectrum {
     tap: native::Tap,
-    channels: Option<u32>,
+    format: Option<(u32, u32)>,
     consumer: LiveConsumer,
 }
 
+#[cfg(unix)]
 impl LiveSpectrum {
     /// Allocates bounded transport and shared analysis state before callbacks can run.
-    fn new() -> Result<Self, &'static str> {
+    fn new(_handle: std::ptr::NonNull<crate::ffi::Handle>) -> Result<Self, &'static str> {
         Ok(Self {
             tap: native::Tap::new()?,
-            channels: None,
+            format: None,
             consumer: LiveConsumer::default(),
         })
+    }
+
+    /// Lists only the owned PCM tap when a negotiated source format changes.
+    fn labels(&self) -> Vec<String> {
+        if self.format.is_some() {
+            vec!["resolibre_live".into()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Keeps Linux's sealed PCM tap while sharing the platform-independent installation path.
+    fn graph(&mut self, _rate: u32, channels: u32) -> Result<String, &'static str> {
+        Ok(self.tap.graph(channels))
     }
 
     /// Rejects existing graph identities before a native seek reconstructs audio filters.
@@ -76,7 +95,18 @@ impl LocalPlayer {
             .live_spectrum
             .as_mut()
             .ok_or("Live spectrum unavailable")?;
-        spectrum.poll(clock, timing.paused, self.scanning).map(Some)
+        let result = spectrum.poll(clock, timing.paused, self.scanning).map(Some);
+        #[cfg(windows)]
+        if result.is_err() {
+            // Stop native measurement work after optional-analysis failure, retaining the audio path.
+            for label in spectrum.labels() {
+                let _ = self.command(
+                    &["af", "remove", &format!("@{label}")],
+                    "live spectrum retirement",
+                );
+            }
+        }
+        result
     }
 
     /// Installs the branch after channel negotiation, retaining its context until native destruction.
@@ -92,18 +122,29 @@ impl LocalPlayer {
             return Err("Live spectrum channel count unsupported");
         }
         if self.live_spectrum.is_none() {
-            self.live_spectrum = Some(LiveSpectrum::new()?);
+            self.live_spectrum = Some(LiveSpectrum::new(self.handle)?);
         }
         let spectrum = self
             .live_spectrum
-            .as_ref()
+            .as_mut()
             .ok_or("Live spectrum unavailable")?;
-        if spectrum.channels != Some(source.channels) {
-            let graph = spectrum.tap.graph(source.channels);
-            self.command(&["af", "pre", &graph], "live spectrum setup")
+        let format = (source.sample_rate_hz, source.channels);
+        if spectrum.format != Some(format) {
+            let labels = spectrum.labels();
+            let graph = spectrum.graph(source.sample_rate_hz, source.channels)?;
+            for label in labels {
+                self.command(
+                    &["af", "remove", &format!("@{label}")],
+                    "live spectrum replacement",
+                )
                 .map_err(|_| "Live spectrum filter unavailable")?;
+            }
+            if !graph.is_empty() {
+                self.command(&["af", "pre", &graph], "live spectrum setup")
+                    .map_err(|_| "Live spectrum filter unavailable")?;
+            }
             if let Some(spectrum) = self.live_spectrum.as_mut() {
-                spectrum.channels = Some(source.channels);
+                spectrum.format = Some(format);
             }
         }
         Ok(true)

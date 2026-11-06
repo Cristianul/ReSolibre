@@ -1,21 +1,8 @@
 //! Opt-in real X11/XWayland event-loop verification, with no global input injection.
 
+use super::test_window::SnapTestWindow;
 use super::*;
 use std::time::{Duration, Instant};
-
-slint::slint! {
-    export component SnapTestWindow inherits Window {
-        title: "ReSolibre snap verification";
-        in property <bool> frameless: true;
-        no-frame: root.frameless;
-        resize-border-width: 6px;
-        min-width: 220px;
-        min-height: 160px;
-        preferred-width: 220px;
-        preferred-height: 160px;
-        Text { text: "ReSolibre · window snap test"; }
-    }
-}
 
 /// Checks native edge snapping, grouped main moves, follower detachment and reattachment on all sides.
 #[test]

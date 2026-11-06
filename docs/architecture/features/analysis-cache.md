@@ -21,26 +21,24 @@ Automatic next-track rhythm requires MIX. Opening diagnostics can reuse a plot;
 [Analyze all](library-analysis.md) reuses valid full results; individual Analyze
 recomputes and replaces full/older rhythm results. Failed attempts preserve prior data. No music is modified.
 
-`resolibre-storage` owns portable content hashing, SQLite and cached-result validation.
-Symphonia demuxes audio packets without constructing a decoder. SHA-256 covers the
-complete encoded packet sequence, timing/trim and technical codec setup. MP4 audio
-edit lists/movie timescale and gapless trim tags also contribute, because they affect
-beat timing; descriptive metadata does not. Text tags,
-artwork, paths and stream IDs do not enter the digest. Retagging, renaming or copying
-unchanged encoded audio can reuse results. Different encodings may have different
-keys even when they sound identical: this is not an acoustic fingerprint or proof
-of lossless provenance. Artist/title are bounded descriptive fields, refreshed on
-reuse; they do not authorize a lookup. A bounded RIFF INFO fallback covers a
-Symphonia 0.6.1 WAV metadata-log omission.
+`resolibre-storage` owns portable hashing, SQLite and validation. Symphonia demuxes
+encoded audio without decoding it. SHA-256 covers every packet, timing/trim, codec
+setup, MP4 edit lists/movie timescale and gapless trim tags because they affect
+beat timing. Text tags, artwork, paths and stream IDs are excluded. Retagging,
+renaming or copying unchanged audio can reuse results. Different encodings may
+hash differently even when they sound identical; this is neither an acoustic
+fingerprint nor proof of lossless provenance. Artist/title are bounded display
+fields refreshed on reuse, never authorization. A bounded RIFF INFO fallback
+handles Symphonia 0.6.1's WAV metadata-log omission.
 
 Analysis jobs rehash audio; timestamps are not an integrity proof. Historical
 inspection keeps all small facts and five recent plots. Evicted plots reload by
 a previously verified digest on a separate profile-scoped reader, without music
 I/O; missing/invalid rows fall back to analysis. This never authorizes playback.
 Forced refresh, removal and shutdown release facts; the queue caps entries at 1,024.
-The Linux adapter uses an independent cursor on the retained original descriptor,
-checks file identity before/after hashing and decoding, and revalidates before
-publication. Session generation checks remain authoritative. No database work or hashing runs on UI, transport or audio threads. Desktop supplies the profile location; tests/default sessions have no cache.
+Linux/Windows use independent retained-file cursors and recheck identity before
+publication. Session generations reject stale work. Hashing/SQLite run only on
+workers. Desktop supplies the profile; tests/default sessions have no cache.
 Remote sources need scoped storage/access adapters.
 
 Library badge restoration uses an additive `track_sources_v1` index (at most 4,096
@@ -61,8 +59,10 @@ Local filesystem stalls and allocations internal to demuxers are not hard realti
 bounded. Results describe original audio, independent of EQ, output volume or MIX.
 
 SQLite transactions use schema 6, defensive mode, untrusted-schema protection,
-50 ms lock waits, a 2 MiB page cache, no mmap and bounded result reads. Unknown
-schemas are rejected; incompatible future analysis/hash changes must explicitly
+50 ms lock waits, a 2 MiB page cache, no mmap and bounded result reads.
+Opening retries SQLite busy/locked errors twice with 10 ms backoff and revalidation.
+Cache opens query journal mode before requesting a change. Unknown schemas are
+rejected; incompatible future analysis/hash changes must explicitly
 invalidate the cache in a schema migration, not silently reinterpret old rows.
 Schemas 1–4 are atomically invalidated and recomputed on demand for the revised
 tempo analysis; old rhythm and full reports cannot supply BPM or analysis badges.
@@ -81,6 +81,8 @@ links, hard links, special files, shared permissions and oversized database file
 are rejected. The platform must supply a trusted private profile root. `clear()`
 removes analyses and vacuums this database; metadata remains; no desktop clear button yet.
 Deleting the dedicated analysis directory while closed also rebuilds the cache.
+Concurrent directory creation is revalidated. Windows checks opened file handles;
+an unlinked SQLite journal is harmless, while hardlinks/reparse points remain rejected.
 
 ## Key Files
 
@@ -104,34 +106,33 @@ A real session restart restores automatic rhythm and the requested spectrogram.
 Regression checks cover MIX reopening, five-plot eviction with 10k small summaries,
 offline-source reload under 0.5 s, profile isolation, corrupt/oversized rows, stale
 completions and forced refresh. A maximum matrix reload measured 42 ms locally.
+Storage regressions cover concurrent creation, deleted Windows journals and hardlinks
+to the database and every journal/WAL/SHM sidecar.
 Cold identity probes remain separate: 0.67 s for a 76 MB FLAC, zero decoded seconds.
 
 Run `cargo test --workspace`; opt-in container checks:
 `cargo test -p resolibre-storage real_formats_retag_without_reanalysis -- --ignored`.
-These generate WAV/FLAC/MP3/AAC/Vorbis/Opus fixtures, change tags/covers/MP4 edit
-timing, reject multiple audio streams and preserve input originals.
+They generate WAV/FLAC/MP3/AAC/Vorbis/Opus, change tags/covers/MP4 timing,
+reject multiple audio streams and preserve originals.
 The opt-in `persistent_cache_song_length_timing` uses a generated four-minute FLAC;
 one local run measured 2.15 s cold analysis versus 0.12 s for a reopened cache hit,
 including content hashing (3.9 MB compressed fixture; not a general benchmark).
 `check_playback_responsiveness.py --session-worker --analysis-cache --trials 3`
 checks controls/resources with persistence; `check_mix.py` uses a private cache.
-Local evidence: 188 workspace tests passed (36 opt-in tests excluded); eight storage
-checks including generated-container cases passed. Three MIX captures with caching
-passed (maximum beat offset 27 ms, peak 98.12 MiB). Six WAV/FLAC control/resource
-runs passed 360 lifecycle cycles, peaking at 94.25 MiB. Playback CPU ranged
-5.60–16.19% of one core, above the existing 5% target; the first control run overlapped
-the MIX workload, so this is regression/stress evidence, not an isolated CPU baseline.
-The 100-trial, physical-device and mobile gates remain open.
-Use the documented native environment for adapter checks/builds.
+Earlier Linux evidence: 188 workspace tests passed (36 opt-in excluded), plus eight
+storage/container checks. Three cached MIX captures passed (max beat offset 27 ms,
+peak 98.12 MiB). Six WAV/FLAC control runs passed 360 lifecycle cycles at 94.25 MiB
+peak. CPU was 5.60–16.19% of one core, above the 5% target. The first run overlapped
+MIX: these are stress observations, not an isolated CPU baseline. The 100-trial,
+physical-device and mobile gates remain open. Use the documented native environment.
 
 ## Edge Cases
 
 Labels may be absent; this is not a catalog/history. Cached measurements never
 replace current codec or bit-depth facts. Storage failure does not erase music or saved session intent. Cancellation
 never stores partial analysis. Persistence is bounded, so evicted or unsupported
-inputs can be analyzed again. Windows/Android/iOS storage permissions, SQLite
-packaging and native decoder lifecycles remain unvalidated; portable Rust does not
-establish a working application port.
+inputs can be analyzed again. [Windows checks](../../development/windows-native.md)
+cover native storage/decoding; Android/iOS adapters remain unvalidated.
 
 Dependencies: pinned [Symphonia](https://docs.rs/symphonia/0.6.1/) (MPL-2.0),
 [rusqlite](https://docs.rs/rusqlite/0.40.2/) with bundled SQLite (MIT/public domain),

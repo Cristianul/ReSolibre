@@ -22,7 +22,7 @@ impl GroupDrag {
 }
 
 impl SnapGroup {
-    /// Takes over only an attached, frameless X11 player; other gestures retain toolkit native drag.
+    /// Takes over an attached, frameless player on X11/Windows; other gestures retain toolkit native drag.
     pub fn begin_drag(&self, main: &slint::Window) -> bool {
         self.end_drag();
         let Some(player) = self.player else {

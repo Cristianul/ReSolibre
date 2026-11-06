@@ -52,6 +52,7 @@ of main. X11 uses live decorated extents, zero frameless extents and explicit gr
 - `apps/desktop/src/window_snap.rs`: snapping; `window_group.rs`: activation/registration.
 - `apps/desktop/src/window_group/membership.rs`: native identity and switcher hints.
 - `apps/desktop/src/window_snap/{geometry,movement,drag}.rs`: group state/gestures; `x11.rs`: native moves.
+- `apps/desktop/src/window_snap/test_window.rs`: shared native test surfaces.
 
 ## Tests
 
@@ -63,6 +64,8 @@ sides, 5/6 px, alignment, corners, negative coordinates and integer extremes.
 process group and temporary profile; it does not alter the user's display.
 [Evidence and limits](../../testing/detachable-playlist-validation.md).
 Existing queue, persistence and scrub tests remain connected regressions.
+`native_direct_group_drag` also runs individually on Windows: it checks native
+one-pixel moves, reversals, focus transitions and hidden peers with a 15-second watchdog.
 
 ## Edge Cases
 

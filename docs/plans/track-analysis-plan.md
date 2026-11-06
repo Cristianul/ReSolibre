@@ -2,7 +2,7 @@
 
 Status: active, partial implementation. The [technical strip](../architecture/features/track-information.md)
 and [live spectrum](../architecture/features/live-spectrum.md), artwork button,
-[spectrogram/BPM](../architecture/features/track-analysis.md) work on Linux.
+[spectrogram/BPM](../architecture/features/track-analysis.md) work on Linux/Windows.
 Platform/device/resource acceptance remains open; this plan is not yet archived.
 Approved: technical details below the title, full-track analysis from an artwork
 hover button, and live spectrum between playback controls and volume. Keep artwork.
@@ -77,7 +77,10 @@ implementation.
    report any required engine/platform tradeoff for a decision.
    Live PCM comes from playback, never the system mix or a second decode.
    Decision: retain libmpv and pursue the filter. The [Linux proof](../testing/live-tap-validation.md)
-   preserves captured audio. Linux lifecycle/UI work; exact timing and platform builds remain open.
+   preserves captured audio. Windows now uses bounded native bandpass/RMS metadata
+   in the same playback graph; bands/timing/lifecycle stay shared. Native PCM
+   preservation and UI journeys pass on Windows too. Its display is not STFT
+   parity. Exact physical timing, full resource gates and mobile builds remain open.
 3. Build one reusable FFT/STFT module with separate bounded live and offline
    consumers. Playback never waits for analysis: drop visual frames on overload.
    Analyze original decoded audio for file diagnostics, independent of EQ/volume;

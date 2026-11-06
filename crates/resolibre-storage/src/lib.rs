@@ -28,43 +28,89 @@ pub struct AnalysisCache {
 #[derive(Debug)]
 pub struct CacheError;
 
+enum OpenFailure {
+    Busy,
+    Unavailable,
+}
+
+/// Keeps only a retry category; native messages and private paths never leave storage.
+fn opening_failure(error: rusqlite::Error) -> OpenFailure {
+    if let rusqlite::Error::SqliteFailure(details, _) = error
+        && matches!(
+            details.code,
+            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+        )
+    {
+        return OpenFailure::Busy;
+    }
+    OpenFailure::Unavailable
+}
+
 impl AnalysisCache {
     /// Opens a private profile database with explicit schema compatibility and bounded native resources.
     pub fn open(directory: &Path) -> Result<Self, CacheError> {
-        let path = files::database_path(directory).map_err(|_| CacheError)?;
+        for attempt in 0..3 {
+            let path = files::database_path(directory).map_err(|_| CacheError)?;
+            match Self::open_connection(&path) {
+                Ok(database) => return Ok(database),
+                Err(OpenFailure::Busy) if attempt < 2 => {
+                    // Drop the failed connection before retrying: some SQLite lock conflicts
+                    // return BUSY without invoking the connection's busy handler.
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => return Err(CacheError),
+            }
+        }
+        Err(CacheError)
+    }
+
+    /// Configures one connection; only transient SQLite lock conflicts permit a fresh attempt.
+    fn open_connection(path: &Path) -> Result<Self, OpenFailure> {
         let connection = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )
-        .map_err(|_| CacheError)?;
+        .map_err(opening_failure)?;
         connection
             .busy_timeout(Duration::from_millis(50))
-            .map_err(|_| CacheError)?;
+            .map_err(opening_failure)?;
         connection
             .set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)
-            .map_err(|_| CacheError)?;
+            .map_err(opening_failure)?;
         connection
             .set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)
-            .map_err(|_| CacheError)?;
+            .map_err(opening_failure)?;
         connection
             .set_limit(
                 rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
                 (MAX_RESULT_BYTES + 16384) as i32,
             )
-            .map_err(|_| CacheError)?;
+            .map_err(opening_failure)?;
         connection
             .execute_batch(
-                "PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;
+                "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;
             PRAGMA cache_size=-2048; PRAGMA temp_store=MEMORY; PRAGMA mmap_size=0;",
             )
-            .map_err(|_| CacheError)?;
+            .map_err(opening_failure)?;
+        let journal_mode: String = connection
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .map_err(opening_failure)?;
+        // Ordinary readers must not request a journal-mode change during another worker's commit.
+        if !journal_mode.eq_ignore_ascii_case("delete") {
+            let applied_mode: String = connection
+                .query_row("PRAGMA journal_mode=DELETE", [], |row| row.get(0))
+                .map_err(opening_failure)?;
+            if !applied_mode.eq_ignore_ascii_case("delete") {
+                return Err(OpenFailure::Unavailable);
+            }
+        }
         let page_size: i64 = connection
             .pragma_query_value(None, "page_size", |row| row.get(0))
-            .map_err(|_| CacheError)?;
+            .map_err(opening_failure)?;
         if !(512..=65536).contains(&page_size) {
-            return Err(CacheError);
+            return Err(OpenFailure::Unavailable);
         }
         connection
             .pragma_update(
@@ -72,10 +118,10 @@ impl AnalysisCache {
                 "max_page_count",
                 files::MAX_DATABASE_BYTES as i64 / page_size,
             )
-            .map_err(|_| CacheError)?;
+            .map_err(opening_failure)?;
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
-            .map_err(|_| CacheError)?;
+            .map_err(opening_failure)?;
         if version == 0 {
             connection
                 .execute_batch(
@@ -89,14 +135,14 @@ impl AnalysisCache {
                 CREATE INDEX IF NOT EXISTS analysis_access ON analyses(accessed);
                 PRAGMA user_version=6; COMMIT;",
                 )
-                .map_err(|_| CacheError)?;
+                .map_err(opening_failure)?;
         } else if matches!(version, 1..=5) {
             migrate_analysis_cache(&connection)?;
         } else if version != SCHEMA {
-            return Err(CacheError);
+            return Err(OpenFailure::Unavailable);
         }
         let database = Self { connection };
-        database.prepare_track_sources()?;
+        database.prepare_track_sources().map_err(opening_failure)?;
         Ok(database)
     }
 
@@ -290,24 +336,24 @@ impl AnalysisCache {
 }
 
 /// Invalidates incompatible reports atomically; schema 5 retains rhythm and refreshes provenance/full results.
-fn migrate_analysis_cache(connection: &Connection) -> Result<(), CacheError> {
+fn migrate_analysis_cache(connection: &Connection) -> Result<(), OpenFailure> {
     connection
         .execute_batch("BEGIN IMMEDIATE;")
-        .map_err(|_| CacheError)?;
+        .map_err(opening_failure)?;
     // Recheck after acquiring the write lock: another process may have migrated already.
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
-        .map_err(|_| CacheError)?;
+        .map_err(opening_failure)?;
     if matches!(version, 1..=4) {
         connection
             .execute_batch("DELETE FROM analyses; PRAGMA user_version=6;")
-            .map_err(|_| CacheError)?;
+            .map_err(opening_failure)?;
     } else if version == 5 {
         connection
             .execute_batch("DELETE FROM analyses WHERE kind=2; PRAGMA user_version=6;")
-            .map_err(|_| CacheError)?;
+            .map_err(opening_failure)?;
     } else if version != SCHEMA {
-        return Err(CacheError);
+        return Err(OpenFailure::Unavailable);
     }
-    connection.execute_batch("COMMIT;").map_err(|_| CacheError)
+    connection.execute_batch("COMMIT;").map_err(opening_failure)
 }

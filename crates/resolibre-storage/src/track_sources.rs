@@ -5,15 +5,13 @@ use rusqlite::{OptionalExtension, params};
 
 impl AnalysisCache {
     /// Adds a bounded, rebuildable index without invalidating existing full analyses.
-    pub(crate) fn prepare_track_sources(&self) -> Result<(), CacheError> {
-        self.connection
-            .execute_batch(
-                "CREATE TABLE IF NOT EXISTS track_sources_v1 (
+    pub(crate) fn prepare_track_sources(&self) -> rusqlite::Result<()> {
+        self.connection.execute_batch(
+            "CREATE TABLE IF NOT EXISTS track_sources_v1 (
                     identity BLOB PRIMARY KEY CHECK(length(identity)=56),
                     hash BLOB NOT NULL CHECK(length(hash)=32),
                     accessed INTEGER NOT NULL);",
-            )
-            .map_err(|_| CacheError)
+        )
     }
 
     /// Avoids reading audio during startup when this profile has no full reports to restore.

@@ -367,6 +367,9 @@ pub fn present(window: &slint::Window) {
 #[cfg(all(test, unix))]
 mod native_tests;
 
+#[cfg(test)]
+mod test_window;
+
 /// Selects X11/XWayland for this invocation only, before creating any Slint window.
 #[cfg(unix)]
 pub fn select_x11() -> Result<(), &'static str> {
